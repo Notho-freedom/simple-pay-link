@@ -449,6 +449,82 @@ async function route(req, res) {
     }
   }
 
+  // Streaming terminal execution (newline-delimited JSON events).
+  if (req.method === 'POST' && p === '/api/terminal/stream') {
+    const body = await readBody(req);
+    const workCwd = expandHome(body.cwd || os.homedir());
+    const command = String(body.command || '').trim();
+    const profile = body.profile || 'powershell';
+
+    res.writeHead(200, {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-cache',
+      'access-control-allow-origin': '*',
+      'x-accel-buffering': 'no',
+    });
+    const send = (obj) => { try { res.write(JSON.stringify(obj) + '\n'); } catch { /* client gone */ } };
+    const jobId = `job-${Date.now().toString(36)}`;
+    send({ type: 'start', jobId });
+
+    if (!command) { send({ type: 'end', code: 0, jobId }); return res.end(); }
+
+    let shellName;
+    let shellArgs;
+    if (profile === 'bash') { shellName = process.platform === 'win32' ? 'bash.exe' : '/bin/bash'; shellArgs = ['-lc', command]; }
+    else if (profile === 'cmd') { shellName = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'; shellArgs = process.platform === 'win32' ? ['/d', '/s', '/c', command] : ['-c', command]; }
+    else if (profile === 'node') { shellName = 'node'; shellArgs = ['-e', command]; }
+    else if (profile === 'python') { shellName = process.platform === 'win32' ? 'python.exe' : 'python3'; shellArgs = ['-c', command]; }
+    else {
+      shellName = process.platform === 'win32' ? 'powershell.exe' : '/bin/sh';
+      shellArgs = process.platform === 'win32'
+        ? ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command]
+        : ['-lc', command];
+    }
+
+    try {
+      const child = spawn(shellName, shellArgs, { cwd: workCwd, windowsHide: true });
+      child.stdout.on('data', (chunk) => send({ type: 'data', chunk: chunk.toString('utf8') }));
+      child.stderr.on('data', (chunk) => send({ type: 'err', chunk: chunk.toString('utf8') }));
+      child.on('error', (err) => { send({ type: 'err', chunk: err.message }); send({ type: 'end', code: 1, jobId }); res.end(); });
+      child.on('close', (code) => { send({ type: 'end', code: code ?? 0, jobId }); res.end(); });
+      req.on('close', () => { try { child.kill(); } catch { /* noop */ } });
+    } catch (err) {
+      send({ type: 'err', chunk: err.message });
+      send({ type: 'end', code: 1, jobId });
+      res.end();
+    }
+    return;
+  }
+
+  // Path completion for the terminal autocomplete.
+  if (req.method === 'POST' && p === '/api/fs/complete') {
+    const body = await readBody(req);
+    const baseCwd = expandHome(body.cwd || os.homedir());
+    const prefix = String(body.prefix || '');
+    // Split prefix into dir + filename
+    const dirPart = prefix.includes('/') || prefix.includes('\\')
+      ? prefix.replace(/[\\/][^\\/]*$/, '') || (prefix.startsWith('/') ? '/' : '.')
+      : '.';
+    const filePart = prefix.split(/[\\/]/).pop() || '';
+    const searchDir = path.isAbsolute(dirPart)
+      ? expandHome(dirPart)
+      : path.resolve(baseCwd, expandHome(dirPart));
+    try {
+      const entries = await fsp.readdir(searchDir, { withFileTypes: true });
+      const matches = entries
+        .filter((e) => e.name.toLowerCase().startsWith(filePart.toLowerCase()))
+        .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+        .slice(0, 50)
+        .map((e) => {
+          const rel = dirPart === '.' ? e.name : `${dirPart.replace(/[\\/]$/, '')}/${e.name}`;
+          return e.isDirectory() ? `${rel}/` : rel;
+        });
+      return json(res, 200, { success: true, items: matches });
+    } catch (err) {
+      return json(res, 200, { success: true, items: [] });
+    }
+  }
+
   // ── Sources CRUD (FTP + custom local roots persisted to ~/.cognitive-explorer) ──
   if (req.method === 'GET' && p === '/api/sources') {
     return json(res, 200, { success: true, sources: await getAllSources() });
