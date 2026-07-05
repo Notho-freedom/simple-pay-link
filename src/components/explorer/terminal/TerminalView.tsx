@@ -253,9 +253,7 @@ export function TerminalView(props: TerminalViewProps) {
     }
 
     requestAiSuggestions(cmd, result.stdout + '\n' + result.stderr);
-  }, [appendLine, cwd, exec_dep(promptText, executeShell, props), executeShell, promptText, props, requestAiSuggestions]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function exec_dep(..._x: any[]) { return null; }
+  }, [appendLine, cwd, executeShell, promptText, props, requestAiSuggestions]);
 
   // Compute suggestions + ghost text on each input change
   useEffect(() => {
