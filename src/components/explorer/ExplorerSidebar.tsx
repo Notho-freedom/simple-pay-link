@@ -455,7 +455,7 @@ export function ExplorerSidebar({
   };
 
   return (
-    <div className="h-full flex flex-col bg-[hsl(var(--sidebar-background))] border-r border-[hsl(var(--sidebar-border))] overflow-y-auto w-full select-none">
+    <div className="h-full flex flex-col bg-[hsl(var(--sidebar-background))] border-r border-[hsl(var(--sidebar-border))] overflow-y-auto thin-scrollbar w-full select-none">
       <Section k="quick" label={t('sidebar.quickAccess')} collapsed={!!collapsed.quick} onToggle={toggleSection}>
         {!homeSource && <EmptyLine>{isAvailable ? 'Dossier utilisateur indisponible' : 'API locale indisponible'}</EmptyLine>}
         {homeSource && QUICK_ACCESS.map((item) => (
@@ -589,26 +589,30 @@ export function ExplorerSidebar({
       >
         <SidebarItem icon={sidebarIcons.network} label={t('sidebar.network')} active={isNetwork} onClick={() => onNavigateVirtual('network')} />
         {networkSources.length === 0 && <EmptyLine>Aucune source réseau configurée</EmptyLine>}
-        {networkSources.map((source) => (
-          <SidebarItem
-            key={source.id}
-            icon={sourceIcon(source)}
-            label={source.name}
-            active={activeSourceId === source.id}
-            onClick={() => onOpenSource?.(source.id, '/')}
-            indent={1}
-            right={<span className={netStatusDot(source.status)} />}
-            onContextMenu={(e) => openContextMenu(e, {
-              isBackground: false,
-              isNetwork: true,
-              networkKind: networkKind(source),
-              file: null,
-              hasClipboard: false,
-              selectedCount: 1,
-              targetId: source.id,
-            }, (actionId) => void handleSourceAction(actionId, source))}
-          />
-        ))}
+        {networkSources.length > 0 && (
+          <div className="max-h-[240px] overflow-y-auto thin-scrollbar">
+            {networkSources.map((source) => (
+              <SidebarItem
+                key={source.id}
+                icon={sourceIcon(source)}
+                label={source.name}
+                active={activeSourceId === source.id}
+                onClick={() => onOpenSource?.(source.id, '/')}
+                indent={1}
+                right={<span className={netStatusDot(source.status)} />}
+                onContextMenu={(e) => openContextMenu(e, {
+                  isBackground: false,
+                  isNetwork: true,
+                  networkKind: networkKind(source),
+                  file: null,
+                  hasClipboard: false,
+                  selectedCount: 1,
+                  targetId: source.id,
+                }, (actionId) => void handleSourceAction(actionId, source))}
+              />
+            ))}
+          </div>
+        )}
       </Section>
 
       <Section k="devices" label={t('sidebar.devices')} collapsed={!!collapsed.devices} onToggle={toggleSection}>

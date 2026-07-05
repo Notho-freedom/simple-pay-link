@@ -351,7 +351,8 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
       case 'view': explorerToast.info('Affichage', 'Utilisez la barre d\'outils pour changer de vue'); break;
       case 'sort': explorerToast.info('Trier par', 'Cliquez sur un en-tête de colonne'); break;
       default:
-        explorerToast.info(`Action : ${actionId}`, 'Simulation');
+        console.warn('[explorer] action de menu contextuel non gérée :', actionId);
+        explorerToast.info(actionId.replace(/\./g, ' · '), 'Action non disponible dans cette vue');
     }
   }, [ctxMenu, explorer, sourceApi.sources, handleCopy, handleCopyName, handleCopyPath, handleCut, handleDelete, handleOpen, handleOpenSource, handleOpenTerminal, handlePaste, handleProperties, handleNewFile, handleCompress, ops, play, pinFolder, unpinFolder]);
 
