@@ -192,7 +192,7 @@ export function NewConnectionDialog({
       };
       let saved = await api.post<{ success: boolean; source: { id: string; name: string }; error?: string }>('/api/sources', payload);
       if (!saved.success && type !== 'ftp') {
-        saved = { success: true, source: persistLocalSource(type, meta, form, type === 'ftp' ? ftpVariant : null) };
+        saved = { success: true, source: persistLocalSource(type, meta, form, null) };
       }
       if (!saved.success) { setStatus('error'); setError(saved.error || 'Impossible d\'enregistrer la source.'); return; }
       onCreated(saved.source);
