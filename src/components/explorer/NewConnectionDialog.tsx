@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Loader2, Plug, Cloud, HardDrive, Server, Globe } from 'lucide-react';
+import { useMemo, useState, useEffect } from 'react';
+import { Loader2, Plug, Cloud, HardDrive, Server, Globe, CheckCircle2, XCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { HDIcon } from './icons/HDIcon';
 import { api } from '@/lib/apiClient';
@@ -13,11 +13,19 @@ const BOX = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg
 const ICLOUD = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/icloud.svg';
 const LOCAL_SOURCES_KEY = 'explorer.sources.local.v1';
 
+/**
+ * Connection type as consumed by the sidebar/back-end. `ftp` is now a unified
+ * family that carries an inner variant (`ftp` | `ftps` | `sftp`) — the dialog
+ * chooses the right defaults through a segmented control instead of three
+ * separate cards.
+ */
 export type ConnectionType =
-  | 'ftp' | 'ftps' | 'sftp'
+  | 'ftp'
   | 'smb' | 'webdav'
   | 'gdrive' | 'onedrive' | 'dropbox'
   | 'box' | 'icloud' | 's3';
+
+type FtpVariant = 'ftp' | 'ftps' | 'sftp';
 
 interface TypeMeta {
   id: ConnectionType;
@@ -25,49 +33,51 @@ interface TypeMeta {
   hint: string;
   icon: React.ReactNode;
   defaultPort?: number;
-  fields: Array<'host' | 'port' | 'user' | 'password' | 'path' | 'secure' | 'endpoint' | 'bucket' | 'accessKey' | 'secretKey' | 'clientId' | 'clientSecret' | 'refreshToken' | 'token'>;
+  fields: Array<'host' | 'port' | 'user' | 'password' | 'path' | 'secure' | 'endpoint' | 'bucket' | 'accessKey' | 'secretKey' | 'clientId' | 'clientSecret' | 'refreshToken' | 'token' | 'privateKey'>;
 }
 
 const TYPES: TypeMeta[] = [
-  { id: 'ftp',   label: 'FTP',   hint: 'File Transfer Protocol classique',   icon: <Server size={22} className="text-primary" />,   defaultPort: 21,  fields: ['host','port','user','password','secure'] },
-  { id: 'ftps',  label: 'FTPS',  hint: 'FTP sécurisé via TLS',                icon: <Server size={22} className="text-primary" />,   defaultPort: 990, fields: ['host','port','user','password'] },
-  { id: 'sftp',  label: 'SFTP',  hint: 'SSH File Transfer Protocol',           icon: <Server size={22} className="text-emerald-400" />, defaultPort: 22,  fields: ['host','port','user','password'] },
-  { id: 'smb',   label: 'SMB / CIFS', hint: 'Partage Windows / Samba',         icon: <HardDrive size={22} className="text-blue-400" />, defaultPort: 445, fields: ['host','port','user','password','path'] },
-  { id: 'webdav',label: 'WebDAV', hint: 'Nextcloud, ownCloud, IIS…',            icon: <Globe size={22} className="text-cyan-300" />,    defaultPort: 443, fields: ['host','user','password','path'] },
-  { id: 'gdrive',   label: 'Google Drive', hint: 'OAuth utilisateur (client ID requis)', icon: <HDIcon src={GDRIVE} size={22} alt="Google Drive" />, fields: ['clientId','clientSecret','refreshToken'] },
-  { id: 'onedrive', label: 'OneDrive',     hint: 'Microsoft Graph API',                  icon: <HDIcon src={ONEDRIVE} size={22} alt="OneDrive" />, fields: ['clientId','clientSecret','refreshToken'] },
-  { id: 'dropbox',  label: 'Dropbox',      hint: 'App token personnel',                  icon: <HDIcon src={DROPBOX} size={22} alt="Dropbox" />, fields: ['token'] },
-  { id: 'box',      label: 'Box',          hint: 'OAuth Box / developer token',          icon: <HDIcon src={BOX} size={22} alt="Box" />, fields: ['clientId','clientSecret','refreshToken'] },
-  { id: 'icloud',   label: 'iCloud Drive', hint: 'App-specific password / token',         icon: <HDIcon src={ICLOUD} size={22} alt="iCloud Drive" />, fields: ['user','password','path'] },
-  { id: 's3',       label: 'S3 / MinIO',   hint: 'AWS S3 ou compatible',                 icon: <HDIcon src={S3} size={22} alt="S3" />, fields: ['endpoint','bucket','accessKey','secretKey'] },
+  { id: 'ftp',      label: 'FTP',         hint: 'FTP · FTPS · SFTP unifié',           icon: <Server size={22} className="text-primary" />,       defaultPort: 21,  fields: ['host', 'port', 'user', 'password', 'path'] },
+  { id: 'smb',      label: 'SMB / CIFS',  hint: 'Partage Windows / Samba',           icon: <HardDrive size={22} className="text-blue-400" />,   defaultPort: 445, fields: ['host', 'port', 'user', 'password', 'path'] },
+  { id: 'webdav',   label: 'WebDAV',      hint: 'Nextcloud, ownCloud, IIS…',          icon: <Globe size={22} className="text-cyan-300" />,       defaultPort: 443, fields: ['host', 'user', 'password', 'path'] },
+  { id: 'gdrive',   label: 'Google Drive', hint: 'OAuth utilisateur (client ID)',     icon: <HDIcon src={GDRIVE} size={22} alt="Google Drive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'onedrive', label: 'OneDrive',    hint: 'Microsoft Graph API',                icon: <HDIcon src={ONEDRIVE} size={22} alt="OneDrive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'dropbox',  label: 'Dropbox',     hint: 'App token personnel',                icon: <HDIcon src={DROPBOX} size={22} alt="Dropbox" />,   fields: ['token'] },
+  { id: 'box',      label: 'Box',         hint: 'OAuth Box / developer token',        icon: <HDIcon src={BOX} size={22} alt="Box" />,           fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'icloud',   label: 'iCloud Drive', hint: 'App-specific password',              icon: <HDIcon src={ICLOUD} size={22} alt="iCloud Drive" />, fields: ['user', 'password', 'path'] },
+  { id: 's3',       label: 'S3 / MinIO',  hint: 'AWS S3 ou compatible',               icon: <HDIcon src={S3} size={22} alt="S3" />,             fields: ['endpoint', 'bucket', 'accessKey', 'secretKey'] },
 ];
 
 type FormState = Record<string, string | number | boolean>;
 
+const ftpDefaults: Record<FtpVariant, { port: number; secure: boolean }> = {
+  ftp: { port: 21, secure: false },
+  ftps: { port: 990, secure: true },
+  sftp: { port: 22, secure: false },
+};
+
 const initialFor = (t: TypeMeta): FormState => {
   const base: FormState = { name: '', type: t.id };
-  if (t.fields.includes('port')) base.port = t.defaultPort || 21;
-  if (t.fields.includes('secure')) base.secure = t.id === 'ftps';
+  if (t.id === 'ftp') { base.port = 21; base.secure = false; }
+  else if (t.fields.includes('port')) base.port = t.defaultPort || 21;
   return base;
 };
 
 function cloudLabel(type: ConnectionType) {
-  if (type === 'gdrive') return 'Google Drive';
-  if (type === 'onedrive') return 'OneDrive';
-  if (type === 'dropbox') return 'Dropbox';
-  if (type === 'box') return 'Box';
-  if (type === 'icloud') return 'iCloud Drive';
-  if (type === 's3') return 'S3';
-  if (type === 'webdav') return 'WebDAV';
-  if (type === 'sftp') return 'SFTP';
-  return type.toUpperCase();
+  const map: Record<ConnectionType, string> = {
+    ftp: 'FTP', smb: 'SMB', webdav: 'WebDAV',
+    gdrive: 'Google Drive', onedrive: 'OneDrive', dropbox: 'Dropbox',
+    box: 'Box', icloud: 'iCloud Drive', s3: 'S3',
+  };
+  return map[type] || String(type).toUpperCase();
 }
 
-function persistLocalSource(type: ConnectionType, meta: TypeMeta, form: FormState) {
+function persistLocalSource(type: ConnectionType, meta: TypeMeta, form: FormState, ftpVariant: FtpVariant | null) {
+  const provider = type === 'ftp' ? ftpVariant || 'ftp' : type;
   const source = {
-    id: `local-src-${type}-${Date.now()}`,
-    type: (['ftp', 'sftp'].includes(type) ? 'ftp' : ['smb', 'webdav'].includes(type) ? 'network' : 'cloud'),
-    provider: type,
+    id: `local-src-${provider}-${Date.now()}`,
+    type: (['ftp'].includes(type) ? 'ftp' : ['smb', 'webdav'].includes(type) ? 'network' : 'cloud'),
+    provider,
     name: (form.name as string) || (form.host as string) || (form.bucket as string) || cloudLabel(type),
     host: form.host as string | undefined,
     port: form.port as number | undefined,
@@ -95,52 +105,109 @@ export function NewConnectionDialog({
   const [type, setType] = useState<ConnectionType>(initialType || 'ftp');
   const meta = useMemo(() => TYPES.find((t) => t.id === type)!, [type]);
   const [form, setForm] = useState<FormState>(() => initialFor(meta));
+  const [ftpVariant, setFtpVariant] = useState<FtpVariant>('ftp');
+  const [testResult, setTestResult] = useState<null | { ok: boolean; message?: string }>(null);
   const [status, setStatus] = useState<'idle' | 'testing' | 'saving' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Reset test state when switching types/variants
+    setTestResult(null);
+    setError(null);
+    setStatus('idle');
+  }, [type, ftpVariant]);
 
   const changeType = (id: ConnectionType) => {
     const next = TYPES.find((t) => t.id === id)!;
     setType(id);
+    setFtpVariant('ftp');
     setForm(initialFor(next));
-    setError(null);
-    setStatus('idle');
   };
 
-  const update = (k: string, v: string | number | boolean) => setForm((prev) => ({ ...prev, [k]: v }));
+  const changeFtpVariant = (v: FtpVariant) => {
+    setFtpVariant(v);
+    setForm((prev) => ({
+      ...prev,
+      port: ftpDefaults[v].port,
+      secure: ftpDefaults[v].secure,
+    }));
+  };
 
-  const submit = async () => {
+  const update = (k: string, v: string | number | boolean) => {
+    setForm((prev) => ({ ...prev, [k]: v }));
+    setTestResult(null);
+  };
+
+  const runTest = async (): Promise<boolean> => {
     setError(null);
-    if (meta.fields.includes('host') && !form.host) { setError('Adresse hôte requise.'); return; }
-    if (type === 's3' && !form.endpoint) { setError('Endpoint S3 requis.'); return; }
-    if ((type === 'gdrive' || type === 'onedrive') && !form.clientId) { setError('Client ID requis.'); return; }
-
+    if (meta.fields.includes('host') && !form.host) { setError('Adresse hôte requise.'); return false; }
     setStatus('testing');
     try {
-      // FTP has a dedicated tester — everything else we optimistically save.
-      if (type === 'ftp' || type === 'ftps') {
-        const test = await api.post<{ success: boolean; error?: string }>('/api/ftp/test', {
-          ...form, secure: type === 'ftps' ? true : form.secure,
+      if (type === 'ftp') {
+        const res = await api.post<{ success: boolean; error?: string }>('/api/ftp/test', {
+          ...form,
+          variant: ftpVariant,
+          secure: ftpVariant === 'ftps' ? true : Boolean(form.secure),
         });
-        if (!test.success) { setStatus('error'); setError(test.error || 'Échec du test de connexion.'); return; }
+        if (!res.success) {
+          setTestResult({ ok: false, message: res.error || 'Échec du test' });
+          setStatus('error');
+          return false;
+        }
+        setTestResult({ ok: true, message: 'Connexion réussie' });
+        setStatus('idle');
+        return true;
       }
-      setStatus('saving');
-      const payload = { ...form, type, name: (form.name as string) || (form.host as string) || meta.label };
+      // For other endpoints we consider a filled form as "test passed" (server-side test not wired for those yet)
+      const missing: string[] = [];
+      for (const f of meta.fields) {
+        if (['secure', 'path'].includes(f)) continue;
+        if (!form[f]) missing.push(f);
+      }
+      if (missing.length) {
+        setTestResult({ ok: false, message: `Champs manquants: ${missing.join(', ')}` });
+        setStatus('error');
+        return false;
+      }
+      setTestResult({ ok: true, message: 'Paramètres validés (test réel indisponible)' });
+      setStatus('idle');
+      return true;
+    } catch (err) {
+      setTestResult({ ok: false, message: (err as Error).message });
+      setStatus('error');
+      return false;
+    }
+  };
+
+  const submit = async () => {
+    const ok = testResult?.ok || (await runTest());
+    if (!ok) return;
+    setStatus('saving');
+    try {
+      const payload = {
+        ...form,
+        type: type === 'ftp' ? 'ftp' : type,
+        variant: type === 'ftp' ? ftpVariant : undefined,
+        name: (form.name as string) || (form.host as string) || meta.label,
+      };
       let saved = await api.post<{ success: boolean; source: { id: string; name: string }; error?: string }>('/api/sources', payload);
-      if (!saved.success && !['ftp', 'ftps'].includes(type)) {
-        saved = { success: true, source: persistLocalSource(type, meta, form) };
+      if (!saved.success && type !== 'ftp') {
+        saved = { success: true, source: persistLocalSource(type, meta, form, type === 'ftp' ? ftpVariant : null) };
       }
       if (!saved.success) { setStatus('error'); setError(saved.error || 'Impossible d\'enregistrer la source.'); return; }
       onCreated(saved.source);
       onOpenChange(false);
       setStatus('idle');
       setForm(initialFor(meta));
+      setTestResult(null);
     } catch (err) {
-      if (!['ftp', 'ftps'].includes(type)) {
-        const source = persistLocalSource(type, meta, form);
+      if (type !== 'ftp') {
+        const source = persistLocalSource(type, meta, form, null);
         onCreated(source);
         onOpenChange(false);
         setStatus('idle');
         setForm(initialFor(meta));
+        setTestResult(null);
         return;
       }
       setStatus('error');
@@ -149,6 +216,7 @@ export function NewConnectionDialog({
   };
 
   const busy = status === 'testing' || status === 'saving';
+  const canSave = testResult?.ok === true && !busy;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -159,9 +227,9 @@ export function NewConnectionDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-[220px_1fr] gap-0 min-h-[380px]">
+        <div className="grid grid-cols-[220px_1fr] gap-0 min-h-[420px] max-h-[70vh]">
           {/* Type picker */}
-          <div className="border-r border-border/30 p-2 space-y-0.5 overflow-y-auto max-h-[70vh]">
+          <div className="border-r border-border/30 p-2 space-y-0.5 overflow-y-auto thin-scrollbar">
             {TYPES.map((t) => (
               <button
                 key={t.id}
@@ -185,7 +253,34 @@ export function NewConnectionDialog({
           </div>
 
           {/* Form */}
-          <div className="p-5 space-y-3 text-[12px] overflow-y-auto max-h-[70vh]">
+          <div className="p-5 space-y-3 text-[12px] overflow-y-auto thin-scrollbar">
+            {type === 'ftp' && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1.5">Protocole</div>
+                <div className="inline-flex rounded-full border border-border/40 p-0.5 bg-[hsl(var(--muted))]/40">
+                  {(['ftp', 'ftps', 'sftp'] as FtpVariant[]).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => changeFtpVariant(v)}
+                      className={cn(
+                        'px-3 h-6 text-[11px] font-mono rounded-full transition-all',
+                        ftpVariant === v
+                          ? 'bg-primary text-primary-foreground shadow'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {v.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground/70 mt-1.5 font-light">
+                  {ftpVariant === 'ftp' && 'FTP classique, port 21, non chiffré.'}
+                  {ftpVariant === 'ftps' && 'FTP sécurisé via TLS, port 990.'}
+                  {ftpVariant === 'sftp' && 'SSH File Transfer Protocol, port 22.'}
+                </p>
+              </div>
+            )}
+
             <Field label="Nom (optionnel)">
               <input value={(form.name as string) || ''} onChange={(e) => update('name', e.target.value)}
                 placeholder={meta.label} className={inputCls} />
@@ -213,16 +308,28 @@ export function NewConnectionDialog({
                 {meta.fields.includes('user') && (
                   <Field label="Utilisateur">
                     <input value={(form.user as string) || ''} onChange={(e) => update('user', e.target.value)}
-                      placeholder={type === 'ftp' ? 'anonymous' : ''} className={inputCls} />
+                      placeholder={type === 'ftp' && ftpVariant === 'ftp' ? 'anonymous' : ''} className={inputCls} />
                   </Field>
                 )}
                 {meta.fields.includes('password') && (
-                  <Field label="Mot de passe">
+                  <Field label={type === 'ftp' && ftpVariant === 'sftp' ? 'Mot de passe (ou clé)' : 'Mot de passe'}>
                     <input type="password" value={(form.password as string) || ''}
                       onChange={(e) => update('password', e.target.value)} className={inputCls} />
                   </Field>
                 )}
               </div>
+            )}
+
+            {type === 'ftp' && ftpVariant === 'sftp' && (
+              <Field label="Clé privée SSH (optionnel)">
+                <textarea
+                  value={(form.privateKey as string) || ''}
+                  onChange={(e) => update('privateKey', e.target.value)}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  rows={3}
+                  className={cn(inputCls, 'h-auto py-1.5 font-mono text-[10px]')}
+                />
+              </Field>
             )}
 
             {meta.fields.includes('path') && (
@@ -232,18 +339,17 @@ export function NewConnectionDialog({
               </Field>
             )}
 
-            {meta.fields.includes('secure') && (
+            {type === 'ftp' && ftpVariant === 'ftp' && (
               <label className="flex items-center gap-2 text-[11px] text-muted-foreground select-none">
                 <input type="checkbox" checked={!!form.secure} onChange={(e) => update('secure', e.target.checked)} />
-                Utiliser TLS
+                Utiliser TLS (mode explicite)
               </label>
             )}
 
             {/* Cloud OAuth */}
             {meta.fields.includes('clientId') && (
               <Field label="Client ID">
-                <input value={(form.clientId as string) || ''} onChange={(e) => update('clientId', e.target.value)}
-                  className={inputCls} />
+                <input value={(form.clientId as string) || ''} onChange={(e) => update('clientId', e.target.value)} className={inputCls} />
               </Field>
             )}
             {meta.fields.includes('clientSecret') && (
@@ -253,17 +359,17 @@ export function NewConnectionDialog({
               </Field>
             )}
             {meta.fields.includes('refreshToken') && (
-              <Field label="Refresh token (généré après OAuth)">
+              <Field label="Refresh token">
                 <input type="password" value={(form.refreshToken as string) || ''}
                   onChange={(e) => update('refreshToken', e.target.value)}
-                  placeholder="Généré une fois l'autorisation faite" className={inputCls} />
+                  placeholder="Généré après OAuth" className={inputCls} />
               </Field>
             )}
             {meta.fields.includes('token') && (
               <Field label="Token d'accès">
                 <input type="password" value={(form.token as string) || ''}
                   onChange={(e) => update('token', e.target.value)}
-                  placeholder="Généré depuis la console développeur" className={inputCls} />
+                  placeholder="Console développeur" className={inputCls} />
               </Field>
             )}
 
@@ -275,16 +381,14 @@ export function NewConnectionDialog({
                     placeholder="s3.amazonaws.com" className={inputCls} />
                 </Field>
                 <Field label="Bucket">
-                  <input value={(form.bucket as string) || ''} onChange={(e) => update('bucket', e.target.value)}
-                    className={inputCls} />
+                  <input value={(form.bucket as string) || ''} onChange={(e) => update('bucket', e.target.value)} className={inputCls} />
                 </Field>
               </div>
             )}
             {meta.fields.includes('accessKey') && (
               <div className="grid grid-cols-2 gap-2">
                 <Field label="Access key">
-                  <input value={(form.accessKey as string) || ''} onChange={(e) => update('accessKey', e.target.value)}
-                    className={inputCls} />
+                  <input value={(form.accessKey as string) || ''} onChange={(e) => update('accessKey', e.target.value)} className={inputCls} />
                 </Field>
                 <Field label="Secret key">
                   <input type="password" value={(form.secretKey as string) || ''}
@@ -293,18 +397,32 @@ export function NewConnectionDialog({
               </div>
             )}
 
-            {(['gdrive', 'onedrive', 'box', 'icloud', 'dropbox', 's3', 'webdav', 'sftp'] as ConnectionType[]).includes(type) && (
+            {(['gdrive', 'onedrive', 'box', 'icloud', 'dropbox', 's3', 'webdav'] as ConnectionType[]).includes(type) && (
               <p className="text-[10px] text-muted-foreground/70 leading-relaxed pt-1 border-t border-border/20 mt-2">
                 <Cloud size={10} className="inline mr-1" />
-                Connexion front-only persistée localement pour l’instant. La navigation affiche l’emplacement et garde les paramètres, sans backend fournisseur réel.
+                Connexion front-only : paramètres validés et persistés localement. Test réel côté serveur à venir.
               </p>
+            )}
+
+            {testResult && (
+              <div
+                className={cn(
+                  'flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[11px] font-light animate-fade-in',
+                  testResult.ok
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                    : 'border-red-500/30 bg-red-500/10 text-red-300',
+                )}
+              >
+                {testResult.ok ? <CheckCircle2 size={12} className="mt-0.5 shrink-0" /> : <XCircle size={12} className="mt-0.5 shrink-0" />}
+                <span>{testResult.message}</span>
+              </div>
             )}
 
             {error && <p className="text-[11px] text-red-400 font-light">{error}</p>}
           </div>
         </div>
 
-        <DialogFooter className="px-5 py-3 border-t border-border/30">
+        <DialogFooter className="px-5 py-3 border-t border-border/30 flex items-center gap-2">
           <button
             onClick={() => onOpenChange(false)}
             className="h-8 px-3 text-[12px] rounded border border-border/40 hover:bg-[hsl(var(--explorer-hover))]"
@@ -312,12 +430,26 @@ export function NewConnectionDialog({
             Annuler
           </button>
           <button
-            onClick={submit}
+            onClick={runTest}
             disabled={busy}
-            className="h-8 px-3 text-[12px] rounded bg-primary/90 text-primary-foreground hover:bg-primary flex items-center gap-1.5 disabled:opacity-50"
+            className="h-8 px-3 text-[12px] rounded border border-primary/40 text-primary hover:bg-primary/10 flex items-center gap-1.5 disabled:opacity-50"
           >
-            {busy && <Loader2 size={12} className="animate-spin" />}
-            {status === 'testing' ? 'Test…' : status === 'saving' ? 'Enregistrement…' : 'Enregistrer'}
+            {status === 'testing' && <Loader2 size={12} className="animate-spin" />}
+            Tester la connexion
+          </button>
+          <button
+            onClick={submit}
+            disabled={!canSave}
+            className={cn(
+              'h-8 px-3 text-[12px] rounded flex items-center gap-1.5 transition-all',
+              canSave
+                ? 'bg-primary/90 text-primary-foreground hover:bg-primary'
+                : 'bg-muted text-muted-foreground cursor-not-allowed',
+            )}
+            title={canSave ? '' : 'Testez la connexion avec succès pour activer l\'enregistrement'}
+          >
+            {status === 'saving' && <Loader2 size={12} className="animate-spin" />}
+            Enregistrer
           </button>
         </DialogFooter>
       </DialogContent>
