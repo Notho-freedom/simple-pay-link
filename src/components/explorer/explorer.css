@@ -1,0 +1,23 @@
+/* Explorer-scoped styles. Imported by <FileExplorer />. */
+
+/* Disable text selection inside the explorer chrome — Windows-like behaviour. */
+.explorer-root,
+.explorer-root * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.explorer-root input,
+.explorer-root textarea,
+.explorer-root [contenteditable='true'],
+.explorer-root .allow-select,
+.explorer-root .allow-select * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Smooth marquee selection rectangle */
+.explorer-marquee {
+  background: hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--primary) / 0.45);
+  border-radius: 2px;
+}

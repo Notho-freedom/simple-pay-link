@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "sdk_version": "0.20.0",
+  "path": "/functions/v1/mcp",
+  "auth": {
+    "type": "none"
+  },
+  "mcp": {
+    "server": {
+      "name": "cognitive-explorer-mcp",
+      "version": "0.1.0",
+      "title": "Cognitive Explorer"
+    },
+    "tools": [
+      {
+        "name": "list_folder",
+        "title": "List folder contents",
+        "description": "List immediate children of a folder in the Cognitive Explorer mock filesystem. Use folder id 'root' for 'Ce PC' or 'network-root' for network locations.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "folderId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Folder id to list. Start with 'root' or 'network-root'."
+            }
+          },
+          "required": [
+            "folderId"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "get_file",
+        "title": "Get file metadata",
+        "description": "Return metadata for a single file or folder in the Cognitive Explorer mock filesystem, given its id.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "File or folder id."
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "search_files",
+        "title": "Search files by name",
+        "description": "Case-insensitive substring search across the Cognitive Explorer mock filesystem. Returns up to 50 matches.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Text to search for in file/folder names."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}
