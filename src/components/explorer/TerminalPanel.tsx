@@ -158,16 +158,18 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
           renderPane(panes[0], false)
         ) : (
           <ResizablePanelGroup direction={splitDir}>
-            {panes.map((pane, i) => (
-              <>
+            {panes.flatMap((pane, i) => {
+              const el = (
                 <ResizablePanel key={pane.id} defaultSize={100 / panes.length} minSize={15}>
                   <div className="group h-full w-full">
                     {renderPane(pane, panes.length > 1)}
                   </div>
                 </ResizablePanel>
-                {i < panes.length - 1 && <ResizableHandle key={`h-${pane.id}`} />}
-              </>
-            ))}
+              );
+              return i < panes.length - 1
+                ? [el, <ResizableHandle key={`h-${pane.id}`} />]
+                : [el];
+            })}
           </ResizablePanelGroup>
         )}
       </div>

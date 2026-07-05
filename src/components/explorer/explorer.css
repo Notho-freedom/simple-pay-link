@@ -21,3 +21,28 @@
   border: 1px solid hsl(var(--primary) / 0.45);
   border-radius: 2px;
 }
+
+/* Thin scrollbar utility, reused by sidebar cloud lists and terminal buffer. */
+.thin-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+.thin-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.25);
+  border-radius: 4px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.25) transparent;
+}
+
+/* Terminal caret pulse */
+@keyframes term-caret-blink {
+  0%, 45% { opacity: 1; }
+  50%, 95% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.term-caret {
+  animation: term-caret-blink 1s steps(2, end) infinite;
+}
