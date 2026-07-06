@@ -58,6 +58,28 @@ function expandHome(p) {
   return p;
 }
 
+function safeCwd(value) {
+  const candidate = expandHome(String(value || '').trim());
+  if (!candidate) return os.homedir();
+  try {
+    const stat = fs.statSync(candidate);
+    if (stat.isDirectory()) return candidate;
+  } catch { /* invalid virtual explorer path */ }
+  return os.homedir();
+}
+
+async function resolveCwd(current, target) {
+  const base = safeCwd(current);
+  let next = String(target || '').trim();
+  next = next.replace(/^\/d\s+/i, '').trim();
+  next = next.replace(/^['"]|['"]$/g, '');
+  if (!next || next === '~') next = os.homedir();
+  const resolved = path.resolve(base, expandHome(next));
+  const stat = await fsp.stat(resolved);
+  if (!stat.isDirectory()) throw new Error('Not a directory');
+  return resolved;
+}
+
 function ensureConfigDir() {
   try { fs.mkdirSync(configDir, { recursive: true }); } catch { /* noop */ }
 }
@@ -253,6 +275,64 @@ async function getNetworkInfo() {
   return { interfaces: out, hostname: os.hostname() };
 }
 
+async function getLocalServices() {
+  const services = [];
+  const seen = new Set();
+  const push = (svc) => {
+    const port = Number(svc.port);
+    if (!port || seen.has(port)) return;
+    seen.add(port);
+    const protocol = svc.protocol || 'tcp';
+    const name = svc.name || (port === 8080 ? 'Vite / Web app' : port === 8081 ? 'Explorer API' : `Service local ${port}`);
+    services.push({
+      id: `local-${protocol}-${port}`,
+      name,
+      port,
+      protocol,
+      framework: svc.framework || (port === 5432 ? 'PostgreSQL' : port === 6379 ? 'Redis' : port === 3306 ? 'MySQL' : port === 8080 ? 'Vite' : port === 8081 ? 'Node API' : 'TCP'),
+      status: 'running',
+      url: svc.url || `http://127.0.0.1:${port}`,
+      pid: svc.pid || undefined,
+      uptime: 'détecté maintenant',
+      description: svc.description || 'Service réellement détecté sur cette machine.',
+      routes: [],
+    });
+  };
+
+  if (process.platform === 'win32') {
+    try {
+      const ps = `Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress`;
+      const { stdout } = await exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps}"`, { timeout: 6000 });
+      const raw = JSON.parse(stdout || '[]');
+      const rows = Array.isArray(raw) ? raw : [raw];
+      for (const row of rows) {
+        const port = Number(row.LocalPort);
+        if (!port) continue;
+        let proc = '';
+        try {
+          const r = await exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Process -Id ${Number(row.OwningProcess)} -ErrorAction SilentlyContinue).ProcessName"`, { timeout: 1500 });
+          proc = r.stdout.trim();
+        } catch { /* noop */ }
+        push({ port, pid: row.OwningProcess, name: proc ? `${proc} :${port}` : undefined, framework: proc || undefined });
+      }
+    } catch { /* fallback below */ }
+  } else {
+    try {
+      const { stdout } = await exec('ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true', { timeout: 5000 });
+      for (const line of stdout.split('\n')) {
+        const m = /(?:LISTEN\s+\d+\s+\d+\s+)?(?:\S+:)(\d+)\s+.*?(?:pid=(\d+),|\/(\w+))?/.exec(line);
+        if (!m) continue;
+        const port = Number(m[1]);
+        if (!port || port > 65535) continue;
+        push({ port, pid: m[2], name: m[3] ? `${m[3]} :${port}` : undefined, framework: m[3] });
+      }
+    } catch { /* noop */ }
+  }
+
+  [Number(process.env.VITE_DEV_PORT) || 8080, port].forEach((p) => push({ port: p }));
+  return services.sort((a, b) => a.port - b.port).slice(0, 80);
+}
+
 // ---------------------------------------------------------------------------
 // Filesystem listing (local, ftp)
 // ---------------------------------------------------------------------------
@@ -293,6 +373,77 @@ async function withFtpClient(source, worker) {
   } finally {
     client.close();
   }
+}
+
+async function testWebDav(source) {
+  const base = String(source.host || '').trim();
+  if (!/^https?:\/\//i.test(base)) throw new Error('WebDAV URL must start with http:// or https://');
+  const headers = {};
+  if (source.user || source.password) {
+    headers.authorization = `Basic ${Buffer.from(`${source.user || ''}:${source.password || ''}`).toString('base64')}`;
+  }
+  const response = await fetch(base, { method: 'PROPFIND', headers: { ...headers, depth: '0' } });
+  if (response.status >= 200 && response.status < 400) return true;
+  if (response.status === 401 || response.status === 403) throw new Error('Identifiants WebDAV refusés');
+  throw new Error(`WebDAV unavailable (${response.status})`);
+}
+
+function webDavUrl(source, targetPath = '/') {
+  const base = new URL(String(source.host || ''));
+  const root = String(source.root || source.path || '').replace(/^\/+|\/+$/g, '');
+  const rel = String(targetPath || '/').replace(/^\/+|\/+$/g, '');
+  const parts = [base.pathname.replace(/\/+$/g, ''), root, rel].filter(Boolean).join('/');
+  base.pathname = `/${parts}`.replace(/\/+/g, '/');
+  return base;
+}
+
+function tagText(xml, tag) {
+  const re = new RegExp(`<[^:>]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${tag}>`, 'i');
+  return (re.exec(xml)?.[1] || '').replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+}
+
+function decodeXmlText(value) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+async function listWebDavDir(source, targetPath = '/') {
+  const url = webDavUrl(source, targetPath);
+  const headers = { depth: '1' };
+  if (source.user || source.password) headers.authorization = `Basic ${Buffer.from(`${source.user || ''}:${source.password || ''}`).toString('base64')}`;
+  const response = await fetch(url, { method: 'PROPFIND', headers });
+  if (!response.ok && response.status !== 207) throw new Error(`WebDAV list failed (${response.status})`);
+  const xml = await response.text();
+  const chunks = xml.split(/<[^:>]*:?response[\s>]/i).slice(1);
+  const currentHref = decodeURIComponent(url.pathname.replace(/\/+$/g, ''));
+  const items = [];
+  for (const chunk of chunks) {
+    const href = decodeXmlText(tagText(chunk, 'href'));
+    if (!href) continue;
+    const decodedHref = decodeURIComponent(new URL(href, url).pathname.replace(/\/+$/g, ''));
+    if (decodedHref === currentHref) continue;
+    const fallback = decodedHref.split('/').filter(Boolean).pop() || 'item';
+    const displayName = decodeXmlText(tagText(chunk, 'displayname')) || fallback;
+    const isDirectory = /<[^:>]*:?collection\s*\/?\s*>/i.test(chunk);
+    const size = Number(tagText(chunk, 'getcontentlength')) || 0;
+    const modified = tagText(chunk, 'getlastmodified') || null;
+    const parent = String(targetPath || '/').replace(/\/$/, '') || '';
+    const itemPath = `${parent}/${displayName}`.replace(/\/+/g, '/');
+    items.push({
+      name: displayName,
+      path: itemPath,
+      isDirectory,
+      isFile: !isDirectory,
+      size,
+      modified: modified ? new Date(modified) : null,
+      type: fileTypeFromName(displayName, isDirectory),
+    });
+  }
+  return items;
 }
 
 async function listFtpDir(source, targetPath = '/') {
@@ -360,6 +511,7 @@ async function route(req, res) {
   if (req.method === 'GET' && p === '/api/system/info')     return json(res, 200, { success: true, data: await getSystemInfo() });
   if (req.method === 'GET' && p === '/api/system/drives')   return json(res, 200, { success: true, data: await getDrives() });
   if (req.method === 'GET' && p === '/api/system/network')  return json(res, 200, { success: true, data: await getNetworkInfo() });
+  if (req.method === 'GET' && p === '/api/system/local-services') return json(res, 200, { success: true, data: await getLocalServices() });
   if (req.method === 'GET' && p === '/api/system/icon') {
     if (process.platform !== 'win32') return json(res, 200, { success: false, error: 'System icons are only implemented on Windows' });
     const targetPath = url.searchParams.get('path');
@@ -401,6 +553,16 @@ async function route(req, res) {
     try { await fsp.mkdir(expandHome(body.path), { recursive: true }); return json(res, 200, { success: true, path: body.path }); }
     catch (err) { return json(res, 200, { success: false, error: err.message }); }
   }
+  if (req.method === 'POST' && p === '/api/fs/write') {
+    const body = await readBody(req);
+    try {
+      const target = expandHome(body.path);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, String(body.content || ''), body.overwrite === false ? { flag: 'wx' } : undefined);
+      return json(res, 200, { success: true, path: body.path });
+    }
+    catch (err) { return json(res, 200, { success: false, error: err.message }); }
+  }
   if (req.method === 'POST' && p === '/api/fs/rename') {
     const body = await readBody(req);
     try { await fsp.rename(expandHome(body.from), expandHome(body.to)); return json(res, 200, { success: true }); }
@@ -428,7 +590,7 @@ async function route(req, res) {
 
   if (req.method === 'POST' && p === '/api/terminal/exec') {
     const body = await readBody(req);
-    const cwd = expandHome(body.cwd || os.homedir());
+    const cwd = safeCwd(body.cwd || os.homedir());
     const command = String(body.command || '').trim();
     if (!command) return json(res, 200, { success: true, stdout: '', stderr: '', cwd });
     try {
@@ -449,10 +611,20 @@ async function route(req, res) {
     }
   }
 
+  if (req.method === 'POST' && p === '/api/terminal/cwd') {
+    const body = await readBody(req);
+    try {
+      const cwd = await resolveCwd(body.cwd || os.homedir(), body.target || '');
+      return json(res, 200, { success: true, cwd });
+    } catch (err) {
+      return json(res, 200, { success: false, cwd: safeCwd(body.cwd), error: err.message });
+    }
+  }
+
   // Streaming terminal execution (newline-delimited JSON events).
   if (req.method === 'POST' && p === '/api/terminal/stream') {
     const body = await readBody(req);
-    const workCwd = expandHome(body.cwd || os.homedir());
+    const workCwd = safeCwd(body.cwd || os.homedir());
     const command = String(body.command || '').trim();
     const profile = body.profile || 'powershell';
 
@@ -499,7 +671,7 @@ async function route(req, res) {
   // Path completion for the terminal autocomplete.
   if (req.method === 'POST' && p === '/api/fs/complete') {
     const body = await readBody(req);
-    const baseCwd = expandHome(body.cwd || os.homedir());
+    const baseCwd = safeCwd(body.cwd || os.homedir());
     const prefix = String(body.prefix || '');
     // Split prefix into dir + filename
     const dirPart = prefix.includes('/') || prefix.includes('\\')
@@ -532,7 +704,7 @@ async function route(req, res) {
   if (req.method === 'POST' && p === '/api/sources') {
     const body = await readBody(req);
     const list = loadSources();
-    const source = { id: `src-${Date.now()}`, status: 'configured', readOnly: false, ...body };
+    const source = { id: `src-${Date.now()}`, status: 'configured', readOnly: false, ...body, mock: false };
     list.push(source);
     saveSources(list);
     return json(res, 200, { success: true, source });
@@ -550,7 +722,9 @@ async function route(req, res) {
     if (!source) return json(res, 404, { success: false, error: 'Source not found' });
     try {
       if (source.type === 'ftp') await withFtpClient(source, async () => true);
+      else if (source.type === 'webdav') await testWebDav(source);
       else if (source.type === 'local' || source.type === 'network') await fsp.access(expandHome(source.root || os.homedir()));
+      else throw new Error('Test réel non disponible pour ce fournisseur');
       return json(res, 200, { success: true, sourceId: source.id });
     } catch (err) {
       return json(res, 200, { success: false, sourceId: source.id, error: err.message });
@@ -586,15 +760,24 @@ async function route(req, res) {
     try { await withFtpClient(body, async () => true); return json(res, 200, { success: true }); }
     catch (err) { return json(res, 200, { success: false, error: err.message }); }
   }
+
+  if (req.method === 'POST' && p === '/api/webdav/test') {
+    const body = await readBody(req);
+    try { await testWebDav(body); return json(res, 200, { success: true }); }
+    catch (err) { return json(res, 200, { success: false, error: err.message }); }
+  }
+
   const ftpListMatch = /^\/api\/sources\/([^/]+)\/list$/.exec(p);
   if (req.method === 'GET' && ftpListMatch) {
     const source = (await getAllSources({ includeSecrets: true })).find((s) => s.id === ftpListMatch[1]);
     if (!source) return json(res, 404, { success: false, error: 'Source not found' });
     const targetPath = url.searchParams.get('path') || '/';
     try {
-      const items = source.type === 'ftp'
-        ? await listFtpDir(source, targetPath)
-        : await listLocalDir(resolveSourcePath(source, targetPath));
+      let items;
+      if (source.type === 'ftp') items = await listFtpDir(source, targetPath);
+      else if (source.type === 'webdav') items = await listWebDavDir(source, targetPath);
+      else if (source.type === 'local' || source.type === 'network') items = await listLocalDir(resolveSourcePath(source, targetPath));
+      else throw new Error('Listing réel non disponible pour ce fournisseur');
       return json(res, 200, { success: true, sourceId: source.id, path: targetPath, items });
     } catch (err) {
       return json(res, 200, { success: false, sourceId: source.id, items: [], error: err.message });

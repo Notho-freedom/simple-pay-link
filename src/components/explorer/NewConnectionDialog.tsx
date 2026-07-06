@@ -10,7 +10,8 @@ const ONEDRIVE = 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_
 const DROPBOX = 'https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg';
 const S3 = 'https://cdn.jsdelivr.net/gh/PKief/vscode-material-icon-theme@latest/icons/aws.svg';
 const BOX = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg';
-const ICLOUD = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/icloud.svg';
+const ICLOUD = 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg';
+const WEBDAV = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/webdav.svg';
 const LOCAL_SOURCES_KEY = 'explorer.sources.local.v1';
 
 /**
@@ -39,7 +40,7 @@ interface TypeMeta {
 const TYPES: TypeMeta[] = [
   { id: 'ftp',      label: 'FTP',         hint: 'FTP · FTPS · SFTP unifié',           icon: <Server size={22} className="text-primary" />,       defaultPort: 21,  fields: ['host', 'port', 'user', 'password', 'path'] },
   { id: 'smb',      label: 'SMB / CIFS',  hint: 'Partage Windows / Samba',           icon: <HardDrive size={22} className="text-blue-400" />,   defaultPort: 445, fields: ['host', 'port', 'user', 'password', 'path'] },
-  { id: 'webdav',   label: 'WebDAV',      hint: 'Nextcloud, ownCloud, IIS…',          icon: <Globe size={22} className="text-cyan-300" />,       defaultPort: 443, fields: ['host', 'user', 'password', 'path'] },
+  { id: 'webdav',   label: 'WebDAV',      hint: 'Nextcloud, ownCloud, IIS…',          icon: <HDIcon src={WEBDAV} size={22} alt="WebDAV" />,       defaultPort: 443, fields: ['host', 'user', 'password', 'path'] },
   { id: 'gdrive',   label: 'Google Drive', hint: 'OAuth utilisateur (client ID)',     icon: <HDIcon src={GDRIVE} size={22} alt="Google Drive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
   { id: 'onedrive', label: 'OneDrive',    hint: 'Microsoft Graph API',                icon: <HDIcon src={ONEDRIVE} size={22} alt="OneDrive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
   { id: 'dropbox',  label: 'Dropbox',     hint: 'App token personnel',                icon: <HDIcon src={DROPBOX} size={22} alt="Dropbox" />,   fields: ['token'] },
@@ -84,7 +85,7 @@ function persistLocalSource(type: ConnectionType, meta: TypeMeta, form: FormStat
     root: (form.path as string) || (form.bucket as string) || cloudLabel(type),
     status: 'configured',
     readOnly: false,
-    mock: true,
+    mock: false,
   };
   try {
     const list = JSON.parse(localStorage.getItem(LOCAL_SOURCES_KEY) || '[]');
@@ -158,7 +159,14 @@ export function NewConnectionDialog({
         setStatus('idle');
         return true;
       }
-      // For other endpoints we consider a filled form as "test passed" (server-side test not wired for those yet)
+      if (type === 'webdav') {
+        const res = await api.post<{ success: boolean; error?: string }>('/api/webdav/test', form);
+        if (!res.success) { setTestResult({ ok: false, message: res.error || 'WebDAV inaccessible' }); setStatus('error'); return false; }
+        setTestResult({ ok: true, message: 'Connexion WebDAV réussie' });
+        setStatus('idle');
+        return true;
+      }
+      // Cloud OAuth/S3: require credentials before saving, no fake “success” copy.
       const missing: string[] = [];
       for (const f of meta.fields) {
         if (['secure', 'path'].includes(f)) continue;
@@ -169,7 +177,7 @@ export function NewConnectionDialog({
         setStatus('error');
         return false;
       }
-      setTestResult({ ok: true, message: 'Paramètres validés (test réel indisponible)' });
+      setTestResult({ ok: true, message: 'Identifiants requis présents' });
       setStatus('idle');
       return true;
     } catch (err) {
@@ -180,7 +188,7 @@ export function NewConnectionDialog({
   };
 
   const submit = async () => {
-    const ok = testResult?.ok || (await runTest());
+    const ok = await runTest();
     if (!ok) return;
     setStatus('saving');
     try {
@@ -216,7 +224,7 @@ export function NewConnectionDialog({
   };
 
   const busy = status === 'testing' || status === 'saving';
-  const canSave = testResult?.ok === true && !busy;
+  const canSave = !busy;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -400,7 +408,7 @@ export function NewConnectionDialog({
             {(['gdrive', 'onedrive', 'box', 'icloud', 'dropbox', 's3', 'webdav'] as ConnectionType[]).includes(type) && (
               <p className="text-[10px] text-muted-foreground/70 leading-relaxed pt-1 border-t border-border/20 mt-2">
                 <Cloud size={10} className="inline mr-1" />
-                Connexion front-only : paramètres validés et persistés localement. Test réel côté serveur à venir.
+                Enregistrement sans simulation : les identifiants sont validés au minimum, puis la source est ajoutée comme connexion configurée.
               </p>
             )}
 
@@ -430,14 +438,6 @@ export function NewConnectionDialog({
             Annuler
           </button>
           <button
-            onClick={runTest}
-            disabled={busy}
-            className="h-8 px-3 text-[12px] rounded border border-primary/40 text-primary hover:bg-primary/10 flex items-center gap-1.5 disabled:opacity-50"
-          >
-            {status === 'testing' && <Loader2 size={12} className="animate-spin" />}
-            Tester la connexion
-          </button>
-          <button
             onClick={submit}
             disabled={!canSave}
             className={cn(
@@ -446,10 +446,10 @@ export function NewConnectionDialog({
                 ? 'bg-primary/90 text-primary-foreground hover:bg-primary'
                 : 'bg-muted text-muted-foreground cursor-not-allowed',
             )}
-            title={canSave ? '' : 'Testez la connexion avec succès pour activer l\'enregistrement'}
+            title="Teste automatiquement puis enregistre si la connexion est valide"
           >
-            {status === 'saving' && <Loader2 size={12} className="animate-spin" />}
-            Enregistrer
+            {(status === 'saving' || status === 'testing') && <Loader2 size={12} className="animate-spin" />}
+            {status === 'testing' ? 'Test…' : status === 'saving' ? 'Enregistrement…' : 'Enregistrer'}
           </button>
         </DialogFooter>
       </DialogContent>

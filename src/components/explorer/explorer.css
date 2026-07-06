@@ -46,3 +46,39 @@
 .term-caret {
   animation: term-caret-blink 1s steps(2, end) infinite;
 }
+
+@keyframes terminal-suggestion-glow {
+  0% { box-shadow: 0 0 0 hsl(var(--primary) / 0); transform: translateY(2px) scale(0.98); opacity: 0; }
+  60% { box-shadow: 0 0 22px hsl(var(--primary) / 0.2); }
+  100% { box-shadow: 0 0 12px hsl(var(--primary) / 0.12); transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes terminal-thinking-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.terminal-suggest-pop {
+  animation: terminal-suggestion-glow 180ms ease-out both;
+  backdrop-filter: blur(18px) saturate(1.2);
+}
+
+.terminal-ai-suggestion::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.7);
+  flex: 0 0 auto;
+}
+
+.terminal-thinking-bar::after {
+  content: '';
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.8), transparent);
+  background-size: 220% 100%;
+  animation: terminal-thinking-shimmer 900ms linear infinite;
+}

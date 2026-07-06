@@ -34,6 +34,8 @@ export interface FileExplorerProps {
   onNavigate?: (folderId: string) => void;
 }
 
+interface TerminalTabMeta { cwdName?: string; cwdPath?: string; sessionKey?: string }
+
 function makeId() {
   return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -85,9 +87,9 @@ function ExplorerInner({
   }, [split]);
 
   const newTab = useCallback(
-    (folderId: string = 'root', kind: 'explorer' | 'terminal' = 'explorer') => {
+    (folderId: string = 'root', kind: 'explorer' | 'terminal' = 'explorer', terminal?: TerminalTabMeta) => {
       const id = makeId();
-      setTabs((prev) => [...prev, { id, folderId, kind }]);
+      setTabs((prev) => [...prev, { id, folderId, kind, ...terminal }]);
       setActiveId(id);
       play('tab-new');
     },
@@ -113,7 +115,10 @@ function ExplorerInner({
       const folderId = (e as CustomEvent<{ folderId?: string }>).detail?.folderId || 'root';
       newTab(folderId, 'explorer');
     };
-    const onNewTerm = () => newTab('root', 'terminal');
+    const onNewTerm = (e: Event) => {
+      const detail = (e as CustomEvent<TerminalTabMeta>).detail || {};
+      newTab('root', 'terminal', { ...detail, sessionKey: detail.sessionKey || `tab-${Date.now().toString(36)}` });
+    };
     const onOpenRight = (e: Event) => {
       const detail = (e as CustomEvent<{ leftFolderId?: string; rightFolderId?: string }>).detail || {};
       setSplit({ leftFolderId: detail.leftFolderId || tabs.find((t) => t.id === activeId)?.folderId || 'root', rightFolderId: detail.rightFolderId || 'root' });
@@ -193,7 +198,9 @@ function ExplorerInner({
                 open
                 fill
                 cwd="root"
-                cwdName="Terminal"
+                cwdName={(tab as any).cwdName || "Terminal"}
+                cwdPath={(tab as any).cwdPath}
+                sessionKey={(tab as any).sessionKey || tab.id}
                 onClose={() => closeTab(tab.id)}
                 onCd={() => { /* noop in tab mode */ }}
                 onMkdir={() => { /* noop in tab mode */ }}

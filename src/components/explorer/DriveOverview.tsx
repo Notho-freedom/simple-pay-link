@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Server, WifiOff } from 'lucide-react';
 import { HDIcon } from './icons/HDIcon';
 import { sidebarIcons } from './FileIcon';
@@ -9,12 +9,14 @@ import { useExplorerSources } from '@/hooks/useExplorerSources';
 import { NewConnectionDialog } from './NewConnectionDialog';
 import { localServers } from '@/data/localServers';
 import { explorerToast } from './ExplorerToasts';
+import { api } from '@/lib/apiClient';
 import type { ExplorerSource } from '@/types/explorerSources';
+import type { LocalServer } from '@/data/localServers';
 
 interface Props {
   onNavigate: (id: string) => void;
   onNavigateTrash?: () => void;
-  onOpenLocalServer?: (id: string) => void;
+  onOpenLocalServer?: (id: string, server?: LocalServer) => void;
   onOpenSource?: (id: string, path?: string) => void;
   mode: 'this-pc' | 'network';
 }
@@ -48,7 +50,14 @@ function driveIcon(source: ExplorerSource) {
 }
 
 function sourceIcon(source: ExplorerSource) {
-  if (source.type === 'ftp') return sidebarIcons.ftp;
+  const provider = source.provider || source.type;
+  if (provider === 'gdrive') return 'https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg';
+  if (provider === 'onedrive') return 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_Office_OneDrive_%282019%E2%80%93present%29.svg';
+  if (provider === 'dropbox') return 'https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg';
+  if (provider === 'box') return 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg';
+  if (provider === 'icloud') return 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg';
+  if (provider === 'webdav') return 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/webdav.svg';
+  if (source.type === 'ftp' || provider === 'sftp' || provider === 'ftps') return sidebarIcons.ftp;
   if (source.type === 'cloud') return sidebarIcons.cloud;
   return sidebarIcons.network;
 }
@@ -78,6 +87,15 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
   const { t } = useI18n();
   const { sources, isAvailable, refresh } = useExplorerSources();
   const [ftpOpen, setFtpOpen] = useState(false);
+  const [detectedServers, setDetectedServers] = useState<LocalServer[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get<{ success: boolean; data: LocalServer[] }>('/api/system/local-services')
+      .then((r) => { if (!cancelled && r.success) setDetectedServers(r.data || []); })
+      .catch(() => { if (!cancelled) setDetectedServers([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   const homeSource = useMemo(() => sources.find(isHomeSource) || sources.find((source) => source.type === 'local'), [sources]);
   const localDrives = useMemo(() => sources.filter(isDriveSource), [sources]);
@@ -101,10 +119,10 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
 
         <h3 className="section-label mb-3">Serveurs locaux</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 mb-7">
-          {localServers.map((server) => (
+          {(detectedServers.length ? detectedServers : []).map((server) => (
             <div
               key={server.id}
-              onClick={() => onOpenLocalServer?.(server.id)}
+              onClick={() => onOpenLocalServer?.(server.id, server)}
               onContextMenu={(e) => openContextMenu(e, {
                 isBackground: false,
                 isServer: true,
@@ -115,7 +133,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
                 selectedCount: 1,
                 targetId: server.id,
               }, async (actionId) => {
-                if (actionId === 'open') onOpenLocalServer?.(server.id);
+                if (actionId === 'open') onOpenLocalServer?.(server.id, server);
                 else if (actionId === 'server.browser' || actionId === 'copy.url') {
                   if (actionId === 'server.browser') window.open(server.url, '_blank', 'noopener,noreferrer');
                   else { await navigator.clipboard?.writeText(server.url); explorerToast.success('URL copiée', server.url); }
@@ -131,6 +149,9 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
               <span className={cn('w-2 h-2 rounded-full shrink-0', server.status === 'running' ? 'bg-emerald-400' : server.status === 'error' ? 'bg-red-400' : 'bg-muted-foreground/50')} />
             </div>
           ))}
+          {detectedServers.length === 0 && (
+            <EmptyStateLine title="Aucun serveur local réel détecté" description="Les services apparaîtront ici dès qu'un port en écoute est détecté." />
+          )}
         </div>
 
         <h3 className="section-label mb-3">Emplacements réseau</h3>

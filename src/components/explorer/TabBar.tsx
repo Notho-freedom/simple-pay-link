@@ -9,6 +9,9 @@ export interface TabState {
   id: string;
   folderId: string; // current folder of this tab (unused when kind='terminal')
   kind?: 'explorer' | 'terminal';
+  cwdName?: string;
+  cwdPath?: string;
+  sessionKey?: string;
 }
 
 interface Props {
@@ -20,7 +23,7 @@ interface Props {
 }
 
 function tabLabel(tab: TabState) {
-  if (tab.kind === 'terminal') return 'Terminal';
+  if (tab.kind === 'terminal') return tab.cwdPath ? `Terminal · ${tab.cwdPath.split(/[\\/]/).filter(Boolean).pop() || tab.cwdPath}` : 'Terminal';
   const item = fileSystem[tab.folderId];
   return item?.name || 'Ce PC';
 }

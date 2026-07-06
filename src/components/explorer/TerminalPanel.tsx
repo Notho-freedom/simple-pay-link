@@ -15,6 +15,7 @@ interface Props {
   onMkdir: (name: string) => void;
   fill?: boolean;
   onOpenInTab?: () => void;
+  sessionKey?: string;
 }
 
 interface PaneModel {
@@ -47,7 +48,7 @@ function savePrefs(p: Prefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
 }
 
-export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOpenInTab }: Props) {
+export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOpenInTab, sessionKey }: Props) {
   const initialPrefs = useRef(loadPrefs());
   const [ai, setAi] = useState(initialPrefs.current.ai);
   const [sound, setSound] = useState(initialPrefs.current.sound);
@@ -100,6 +101,7 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
   if (!open) return null;
 
   const initialCwd = cwdPath || cwdName;
+  const panelSessionKey = useRef(sessionKey || `panel-${btoa(unescape(encodeURIComponent(initialCwd))).slice(0, 32)}`);
 
   const renderPane = (pane: PaneModel, showClose: boolean) => (
     <div className="relative h-full w-full">
@@ -124,6 +126,7 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
         registerClear={(fn) => { clearFns.current[pane.id] = fn; }}
         registerCopyAll={(fn) => { copyAllFns.current[pane.id] = fn; }}
         registerFocusInput={(fn) => { focusFns.current[pane.id] = fn; }}
+        sessionKey={`${panelSessionKey.current}:${pane.id}`}
       />
     </div>
   );

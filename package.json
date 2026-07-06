@@ -15,7 +15,9 @@
     "dev:explorer:api": "node scripts/explorer-server.mjs",
     "dev:explorer:web": "vite --open \"/#/explorer\"",
     "electron": "npm run build && node ./node_modules/electron/cli.js electron/main.cjs",
-    "package:win": "electron-builder --win --x64"
+    "package:linux": "npm run build && npx @electron/packager . CognitiveExplorer --platform=linux --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/electron-release'",
+    "package:win": "npm run build && npx @electron/packager . CognitiveExplorer --platform=win32 --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/electron-release'",
+    "package:mac": "npm run build && npx @electron/packager . CognitiveExplorer --platform=darwin --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/electron-release'"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

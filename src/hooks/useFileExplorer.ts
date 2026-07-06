@@ -285,6 +285,27 @@ export function useFileExplorer(initialFolderId?: string) {
     setNav(prev => ({ ...prev, selectedItems: [id], renamingId: id, selectionAnchor: id }));
   }, [nav.currentFolderId, currentFolder]);
 
+  const createFile = useCallback((kind: 'txt' | 'docx' | 'xlsx' | 'pptx' | 'code' = 'txt') => {
+    const map = {
+      txt: { name: 'Nouveau document.txt', type: 'text' as const, extension: 'txt' },
+      docx: { name: 'Nouveau document.docx', type: 'document' as const, extension: 'docx' },
+      xlsx: { name: 'Nouvelle feuille.xlsx', type: 'spreadsheet' as const, extension: 'xlsx' },
+      pptx: { name: 'Nouvelle présentation.pptx', type: 'presentation' as const, extension: 'pptx' },
+      code: { name: 'nouveau-fichier.ts', type: 'code' as const, extension: 'ts' },
+    }[kind];
+    const id = `new-file-${kind}-${Date.now()}`;
+    (fileSystem as any)[id] = {
+      id,
+      ...map,
+      size: 0,
+      dateModified: new Date(),
+      dateCreated: new Date(),
+      parentId: nav.currentFolderId,
+    };
+    if (currentFolder?.children) currentFolder.children.push(id);
+    setNav(prev => ({ ...prev, selectedItems: [id], renamingId: id, selectionAnchor: id }));
+  }, [nav.currentFolderId, currentFolder]);
+
   const getItemName = useCallback((id: string) => renamedItems[id] || fileSystem[id]?.name || '', [renamedItems]);
 
   const buildFullPath = useCallback((id: string): string => {
@@ -310,7 +331,7 @@ export function useFileExplorer(initialFolderId?: string) {
     togglePreview, openPreview, setIconSize, toggleExpanded,
     clipboard, copyItems, cutItems, pasteItems, deleteItems,
     startRename, confirmRename, cancelRename, getItemName, buildFullPath,
-    createFolder,
+    createFolder, createFile,
     canGoBack, canGoForward, canGoUp, isVirtualView,
     renamedItems,
     showHidden, setShowHidden, showExtensions, setShowExtensions,
