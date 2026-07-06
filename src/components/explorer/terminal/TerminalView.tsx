@@ -170,7 +170,7 @@ export function TerminalView(props: TerminalViewProps) {
             const dur = Date.now() - started;
             setRunning(false);
             setLines((prev) => prev.map((l, i) =>
-              i === prev.length - 1 && l.status === 'running'
+              l.status === 'running'
                 ? { ...l, status: (ev.code === 0 ? 'ok' : 'err'), durationMs: dur }
                 : l,
             ));
@@ -189,7 +189,7 @@ export function TerminalView(props: TerminalViewProps) {
             const dur = Date.now() - started;
             setRunning(false);
             setLines((prev) => prev.map((l, i) =>
-              i === prev.length - 1 && l.status === 'running'
+              l.status === 'running'
                 ? { ...l, status: result.success ? 'ok' : 'err', durationMs: dur }
                 : l,
             ));
@@ -199,7 +199,7 @@ export function TerminalView(props: TerminalViewProps) {
             appendChunk('[erreur] API terminal indisponible', 'err');
             setRunning(false);
             setLines((prev) => prev.map((l, i) =>
-              i === prev.length - 1 && l.status === 'running'
+              l.status === 'running'
                 ? { ...l, status: 'err', durationMs: dur }
                 : l,
             ));

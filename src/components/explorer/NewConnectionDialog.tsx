@@ -160,10 +160,9 @@ export function NewConnectionDialog({
         return true;
       }
       if (type === 'webdav') {
-        const host = String(form.host || '');
-        const res = await fetch(host, { method: 'OPTIONS' }).then((r) => ({ ok: r.ok })).catch((err) => ({ ok: false, error: err.message }));
-        if (!res.ok) { setTestResult({ ok: false, message: 'WebDAV inaccessible depuis le navigateur.' }); setStatus('error'); return false; }
-        setTestResult({ ok: true, message: 'Endpoint WebDAV joignable' });
+        const res = await api.post<{ success: boolean; error?: string }>('/api/webdav/test', form);
+        if (!res.success) { setTestResult({ ok: false, message: res.error || 'WebDAV inaccessible' }); setStatus('error'); return false; }
+        setTestResult({ ok: true, message: 'Connexion WebDAV réussie' });
         setStatus('idle');
         return true;
       }

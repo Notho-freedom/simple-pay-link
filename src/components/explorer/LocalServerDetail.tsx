@@ -36,10 +36,7 @@ export function LocalServerDetail({ server, onBack }: Props) {
       }, (id) => {
         if (id === 'server.browser' || id === 'open') window.open(server.url, '_blank');
         else if (id === 'copy.url') { navigator.clipboard?.writeText(server.url); toast.success('URL copiée'); }
-        else if (id === 'server.stop') toast(`${server.name} arrêté (mock)`);
-        else if (id === 'server.start') toast.success(`${server.name} démarré (mock)`);
-        else if (id === 'server.restart') toast(`${server.name} relancé (mock)`);
-        else if (id === 'server.logs') toast.info('Logs (mock)');
+        else if (id === 'server.stop' || id === 'server.start' || id === 'server.restart' || id === 'server.logs') toast.info('Action système non disponible depuis l’interface web');
       })}
     >
       {/* Header */}
@@ -81,17 +78,17 @@ export function LocalServerDetail({ server, onBack }: Props) {
             </div>
             <div className="flex gap-1.5 shrink-0">
               {server.status === 'running' ? (
-                <button onClick={() => { play('click'); toast(`Serveur ${server.name} arrêté (mock)`); }}
+                <button onClick={() => { play('click'); toast.info('Action système non disponible depuis l’interface web'); }}
                   className="h-7 px-2.5 flex items-center gap-1.5 text-[11px] rounded border border-red-500/30 text-red-400 hover:bg-red-500/10">
                   <Square size={11} /> Stop
                 </button>
               ) : (
-                <button onClick={() => { play('click'); toast.success(`Serveur ${server.name} démarré (mock)`); }}
+                <button onClick={() => { play('click'); toast.info('Action système non disponible depuis l’interface web'); }}
                   className="h-7 px-2.5 flex items-center gap-1.5 text-[11px] rounded border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10">
                   <Play size={11} /> Start
                 </button>
               )}
-              <button onClick={() => { play('click'); toast(`Serveur ${server.name} relancé (mock)`); }}
+              <button onClick={() => { play('click'); toast.info('Action système non disponible depuis l’interface web'); }}
                 className="h-7 px-2.5 flex items-center gap-1.5 text-[11px] rounded border border-border/40 hover:border-primary/40 hover:bg-[hsl(var(--explorer-hover))]">
                 <RotateCw size={11} /> Restart
               </button>

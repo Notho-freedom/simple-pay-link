@@ -375,6 +375,77 @@ async function withFtpClient(source, worker) {
   }
 }
 
+async function testWebDav(source) {
+  const base = String(source.host || '').trim();
+  if (!/^https?:\/\//i.test(base)) throw new Error('WebDAV URL must start with http:// or https://');
+  const headers = {};
+  if (source.user || source.password) {
+    headers.authorization = `Basic ${Buffer.from(`${source.user || ''}:${source.password || ''}`).toString('base64')}`;
+  }
+  const response = await fetch(base, { method: 'PROPFIND', headers: { ...headers, depth: '0' } });
+  if (response.status >= 200 && response.status < 400) return true;
+  if (response.status === 401 || response.status === 403) throw new Error('Identifiants WebDAV refusés');
+  throw new Error(`WebDAV unavailable (${response.status})`);
+}
+
+function webDavUrl(source, targetPath = '/') {
+  const base = new URL(String(source.host || ''));
+  const root = String(source.root || source.path || '').replace(/^\/+|\/+$/g, '');
+  const rel = String(targetPath || '/').replace(/^\/+|\/+$/g, '');
+  const parts = [base.pathname.replace(/\/+$/g, ''), root, rel].filter(Boolean).join('/');
+  base.pathname = `/${parts}`.replace(/\/+/g, '/');
+  return base;
+}
+
+function tagText(xml, tag) {
+  const re = new RegExp(`<[^:>]*:?${tag}[^>]*>([\\s\\S]*?)<\\/[^:>]*:?${tag}>`, 'i');
+  return (re.exec(xml)?.[1] || '').replace(/<!\[CDATA\[|\]\]>/g, '').trim();
+}
+
+function decodeXmlText(value) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+async function listWebDavDir(source, targetPath = '/') {
+  const url = webDavUrl(source, targetPath);
+  const headers = { depth: '1' };
+  if (source.user || source.password) headers.authorization = `Basic ${Buffer.from(`${source.user || ''}:${source.password || ''}`).toString('base64')}`;
+  const response = await fetch(url, { method: 'PROPFIND', headers });
+  if (!response.ok && response.status !== 207) throw new Error(`WebDAV list failed (${response.status})`);
+  const xml = await response.text();
+  const chunks = xml.split(/<[^:>]*:?response[\s>]/i).slice(1);
+  const currentHref = decodeURIComponent(url.pathname.replace(/\/+$/g, ''));
+  const items = [];
+  for (const chunk of chunks) {
+    const href = decodeXmlText(tagText(chunk, 'href'));
+    if (!href) continue;
+    const decodedHref = decodeURIComponent(new URL(href, url).pathname.replace(/\/+$/g, ''));
+    if (decodedHref === currentHref) continue;
+    const fallback = decodedHref.split('/').filter(Boolean).pop() || 'item';
+    const displayName = decodeXmlText(tagText(chunk, 'displayname')) || fallback;
+    const isDirectory = /<[^:>]*:?collection\s*\/?\s*>/i.test(chunk);
+    const size = Number(tagText(chunk, 'getcontentlength')) || 0;
+    const modified = tagText(chunk, 'getlastmodified') || null;
+    const parent = String(targetPath || '/').replace(/\/$/, '') || '';
+    const itemPath = `${parent}/${displayName}`.replace(/\/+/g, '/');
+    items.push({
+      name: displayName,
+      path: itemPath,
+      isDirectory,
+      isFile: !isDirectory,
+      size,
+      modified: modified ? new Date(modified) : null,
+      type: fileTypeFromName(displayName, isDirectory),
+    });
+  }
+  return items;
+}
+
 async function listFtpDir(source, targetPath = '/') {
   return withFtpClient(source, async (client) => {
     const entries = await client.list(targetPath);
@@ -651,7 +722,9 @@ async function route(req, res) {
     if (!source) return json(res, 404, { success: false, error: 'Source not found' });
     try {
       if (source.type === 'ftp') await withFtpClient(source, async () => true);
+      else if (source.type === 'webdav') await testWebDav(source);
       else if (source.type === 'local' || source.type === 'network') await fsp.access(expandHome(source.root || os.homedir()));
+      else throw new Error('Test réel non disponible pour ce fournisseur');
       return json(res, 200, { success: true, sourceId: source.id });
     } catch (err) {
       return json(res, 200, { success: false, sourceId: source.id, error: err.message });
@@ -687,15 +760,24 @@ async function route(req, res) {
     try { await withFtpClient(body, async () => true); return json(res, 200, { success: true }); }
     catch (err) { return json(res, 200, { success: false, error: err.message }); }
   }
+
+  if (req.method === 'POST' && p === '/api/webdav/test') {
+    const body = await readBody(req);
+    try { await testWebDav(body); return json(res, 200, { success: true }); }
+    catch (err) { return json(res, 200, { success: false, error: err.message }); }
+  }
+
   const ftpListMatch = /^\/api\/sources\/([^/]+)\/list$/.exec(p);
   if (req.method === 'GET' && ftpListMatch) {
     const source = (await getAllSources({ includeSecrets: true })).find((s) => s.id === ftpListMatch[1]);
     if (!source) return json(res, 404, { success: false, error: 'Source not found' });
     const targetPath = url.searchParams.get('path') || '/';
     try {
-      const items = source.type === 'ftp'
-        ? await listFtpDir(source, targetPath)
-        : await listLocalDir(resolveSourcePath(source, targetPath));
+      let items;
+      if (source.type === 'ftp') items = await listFtpDir(source, targetPath);
+      else if (source.type === 'webdav') items = await listWebDavDir(source, targetPath);
+      else if (source.type === 'local' || source.type === 'network') items = await listLocalDir(resolveSourcePath(source, targetPath));
+      else throw new Error('Listing réel non disponible pour ce fournisseur');
       return json(res, 200, { success: true, sourceId: source.id, path: targetPath, items });
     } catch (err) {
       return json(res, 200, { success: false, sourceId: source.id, items: [], error: err.message });

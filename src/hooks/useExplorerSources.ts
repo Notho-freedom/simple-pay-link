@@ -77,7 +77,7 @@ export function useExplorerSources() {
     }
     const local = readLocalSources().find((source) => source.id === sourceId);
     if (local?.type === 'cloud') {
-      return { success: true, sourceId, path, items: [] };
+      return { success: false, sourceId, path, items: [], error: 'Listing réel non disponible pour ce fournisseur.' };
     }
     const payload = await api.get<ExplorerSourceListResult>(`/api/sources/${encodeURIComponent(sourceId)}/list?path=${encodeURIComponent(path)}`);
     if (payload.success) writeCache(cacheKey, payload);
@@ -86,7 +86,7 @@ export function useExplorerSources() {
 
   const test = useCallback(async (sourceId: string): Promise<{ success: boolean; error?: string }> => {
     const local = readLocalSources().find((source) => source.id === sourceId);
-    if (local?.type === 'cloud') return { success: true };
+    if (local?.type === 'cloud') return { success: false, error: 'Test réel non disponible pour ce fournisseur.' };
     return api.post<{ success: boolean; error?: string }>(`/api/sources/${encodeURIComponent(sourceId)}/test`);
   }, []);
 
