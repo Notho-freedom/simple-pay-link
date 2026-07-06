@@ -51,15 +51,15 @@ function driveIcon(source: ExplorerSource) {
 
 function sourceIcon(source: ExplorerSource) {
   const provider = source.provider || source.type;
-  if (provider === 'gdrive') return 'https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg';
-  if (provider === 'onedrive') return 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_Office_OneDrive_%282019%E2%80%93present%29.svg';
-  if (provider === 'dropbox') return 'https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg';
-  if (provider === 'box') return 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg';
-  if (provider === 'icloud') return 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg';
-  if (provider === 'webdav') return 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/webdav.svg';
+  if (provider === 'gdrive') return sidebarIcons.googleDrive;
+  if (provider === 'onedrive') return sidebarIcons.oneDrive;
+  if (provider === 'dropbox') return sidebarIcons.dropbox;
+  if (provider === 'box') return sidebarIcons.box;
+  if (provider === 'icloud') return sidebarIcons.icloud;
+  if (provider === 'webdav') return sidebarIcons.webdav;
   if (source.type === 'ftp' || provider === 'sftp' || provider === 'ftps') return sidebarIcons.ftp;
   if (source.type === 'cloud') return sidebarIcons.cloud;
-  return sidebarIcons.network;
+  return sidebarIcons.host;
 }
 
 function EmptyStateLine({ title, description }: { title: string; description: string }) {

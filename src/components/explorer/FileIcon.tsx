@@ -1,7 +1,12 @@
 import { FileType } from '@/types/fileExplorer';
 import { HDIcon } from './icons/HDIcon';
 import type { IconDescriptor, LocationKey } from '@/lib/iconResolver';
-
+import onedrive from '@/assets/onedrive.svg';
+import ftp from '@/assets/ftp.png';
+import dropbox from '@/assets/dropbox.svg';
+import cloud from '@/assets/cloud.svg';
+import host from '@/assets/host.png';
+import aws from '@/assets/aws.svg';
 interface FileIconProps {
   type: FileType;
   extension?: string;
@@ -33,12 +38,12 @@ export const sidebarIcons = {
   driveBackup: FB.fbFolderArchive,
   driveSSD: FB.fbDrive,
   usb: FB.fbUSB,
-  googleDrive: FB.fbCloud,
-  oneDrive: FB.fbCloud,
-  dropbox: FB.fbCloud,
-  cloud: FB.fbCloud,
+  googleDrive: 'https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg',
+  oneDrive: onedrive,
+  dropbox: dropbox,
+  cloud: cloud,
   nas: FB.fbFolderServer,
-  ftp: FB.fbFolderServer,
+  ftp: ftp,
   network: FB.fbNetwork,
   phone: FB.fbPhone,
   trashEmpty: FB.fbTrash,
@@ -51,6 +56,11 @@ export const sidebarIcons = {
   videos: FB.fbFolderVideo,
   folder: FB.fbFolder,
   folderOpen: FB.fbFolderOpen,
+  host: host,
+  aws: aws,
+  box: 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg',
+  icloud: 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg',
+  webdav: 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/webdav.svg',
 };
 export const sidebarFallbacks = sidebarIcons;
 export const sidebarEmojis = {

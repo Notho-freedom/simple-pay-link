@@ -4,14 +4,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { HDIcon } from './icons/HDIcon';
 import { api } from '@/lib/apiClient';
 import { cn } from '@/lib/utils';
+import { sidebarIcons } from './FileIcon';
 
-const GDRIVE = 'https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg';
-const ONEDRIVE = 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_Office_OneDrive_%282019%E2%80%93present%29.svg';
-const DROPBOX = 'https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg';
-const S3 = 'https://cdn.jsdelivr.net/gh/PKief/vscode-material-icon-theme@latest/icons/aws.svg';
-const BOX = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg';
-const ICLOUD = 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg';
-const WEBDAV = 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/webdav.svg';
+const GDRIVE = sidebarIcons.googleDrive;
+const ONEDRIVE = sidebarIcons.oneDrive;
+const DROPBOX = sidebarIcons.dropbox;
+const S3 = sidebarIcons.aws;
+const BOX = sidebarIcons.box;
+const ICLOUD = sidebarIcons.icloud;
+const WEBDAV = sidebarIcons.webdav;
 const LOCAL_SOURCES_KEY = 'explorer.sources.local.v1';
 
 /**
