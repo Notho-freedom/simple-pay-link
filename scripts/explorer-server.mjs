@@ -58,6 +58,28 @@ function expandHome(p) {
   return p;
 }
 
+function safeCwd(value) {
+  const candidate = expandHome(String(value || '').trim());
+  if (!candidate) return os.homedir();
+  try {
+    const stat = fs.statSync(candidate);
+    if (stat.isDirectory()) return candidate;
+  } catch { /* invalid virtual explorer path */ }
+  return os.homedir();
+}
+
+async function resolveCwd(current, target) {
+  const base = safeCwd(current);
+  let next = String(target || '').trim();
+  next = next.replace(/^\/d\s+/i, '').trim();
+  next = next.replace(/^['"]|['"]$/g, '');
+  if (!next || next === '~') next = os.homedir();
+  const resolved = path.resolve(base, expandHome(next));
+  const stat = await fsp.stat(resolved);
+  if (!stat.isDirectory()) throw new Error('Not a directory');
+  return resolved;
+}
+
 function ensureConfigDir() {
   try { fs.mkdirSync(configDir, { recursive: true }); } catch { /* noop */ }
 }
@@ -253,6 +275,64 @@ async function getNetworkInfo() {
   return { interfaces: out, hostname: os.hostname() };
 }
 
+async function getLocalServices() {
+  const services = [];
+  const seen = new Set();
+  const push = (svc) => {
+    const port = Number(svc.port);
+    if (!port || seen.has(port)) return;
+    seen.add(port);
+    const protocol = svc.protocol || 'tcp';
+    const name = svc.name || (port === 8080 ? 'Vite / Web app' : port === 8081 ? 'Explorer API' : `Service local ${port}`);
+    services.push({
+      id: `local-${protocol}-${port}`,
+      name,
+      port,
+      protocol,
+      framework: svc.framework || (port === 5432 ? 'PostgreSQL' : port === 6379 ? 'Redis' : port === 3306 ? 'MySQL' : port === 8080 ? 'Vite' : port === 8081 ? 'Node API' : 'TCP'),
+      status: 'running',
+      url: svc.url || `http://127.0.0.1:${port}`,
+      pid: svc.pid || undefined,
+      uptime: 'détecté maintenant',
+      description: svc.description || 'Service réellement détecté sur cette machine.',
+      routes: [],
+    });
+  };
+
+  if (process.platform === 'win32') {
+    try {
+      const ps = `Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | ConvertTo-Json -Compress`;
+      const { stdout } = await exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps}"`, { timeout: 6000 });
+      const raw = JSON.parse(stdout || '[]');
+      const rows = Array.isArray(raw) ? raw : [raw];
+      for (const row of rows) {
+        const port = Number(row.LocalPort);
+        if (!port) continue;
+        let proc = '';
+        try {
+          const r = await exec(`powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-Process -Id ${Number(row.OwningProcess)} -ErrorAction SilentlyContinue).ProcessName"`, { timeout: 1500 });
+          proc = r.stdout.trim();
+        } catch { /* noop */ }
+        push({ port, pid: row.OwningProcess, name: proc ? `${proc} :${port}` : undefined, framework: proc || undefined });
+      }
+    } catch { /* fallback below */ }
+  } else {
+    try {
+      const { stdout } = await exec('ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true', { timeout: 5000 });
+      for (const line of stdout.split('\n')) {
+        const m = /(?:LISTEN\s+\d+\s+\d+\s+)?(?:\S+:)(\d+)\s+.*?(?:pid=(\d+),|\/(\w+))?/.exec(line);
+        if (!m) continue;
+        const port = Number(m[1]);
+        if (!port || port > 65535) continue;
+        push({ port, pid: m[2], name: m[3] ? `${m[3]} :${port}` : undefined, framework: m[3] });
+      }
+    } catch { /* noop */ }
+  }
+
+  [Number(process.env.VITE_DEV_PORT) || 8080, port].forEach((p) => push({ port: p }));
+  return services.sort((a, b) => a.port - b.port).slice(0, 80);
+}
+
 // ---------------------------------------------------------------------------
 // Filesystem listing (local, ftp)
 // ---------------------------------------------------------------------------
@@ -360,6 +440,7 @@ async function route(req, res) {
   if (req.method === 'GET' && p === '/api/system/info')     return json(res, 200, { success: true, data: await getSystemInfo() });
   if (req.method === 'GET' && p === '/api/system/drives')   return json(res, 200, { success: true, data: await getDrives() });
   if (req.method === 'GET' && p === '/api/system/network')  return json(res, 200, { success: true, data: await getNetworkInfo() });
+  if (req.method === 'GET' && p === '/api/system/local-services') return json(res, 200, { success: true, data: await getLocalServices() });
   if (req.method === 'GET' && p === '/api/system/icon') {
     if (process.platform !== 'win32') return json(res, 200, { success: false, error: 'System icons are only implemented on Windows' });
     const targetPath = url.searchParams.get('path');
@@ -401,6 +482,16 @@ async function route(req, res) {
     try { await fsp.mkdir(expandHome(body.path), { recursive: true }); return json(res, 200, { success: true, path: body.path }); }
     catch (err) { return json(res, 200, { success: false, error: err.message }); }
   }
+  if (req.method === 'POST' && p === '/api/fs/write') {
+    const body = await readBody(req);
+    try {
+      const target = expandHome(body.path);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, String(body.content || ''), body.overwrite === false ? { flag: 'wx' } : undefined);
+      return json(res, 200, { success: true, path: body.path });
+    }
+    catch (err) { return json(res, 200, { success: false, error: err.message }); }
+  }
   if (req.method === 'POST' && p === '/api/fs/rename') {
     const body = await readBody(req);
     try { await fsp.rename(expandHome(body.from), expandHome(body.to)); return json(res, 200, { success: true }); }
@@ -428,7 +519,7 @@ async function route(req, res) {
 
   if (req.method === 'POST' && p === '/api/terminal/exec') {
     const body = await readBody(req);
-    const cwd = expandHome(body.cwd || os.homedir());
+    const cwd = safeCwd(body.cwd || os.homedir());
     const command = String(body.command || '').trim();
     if (!command) return json(res, 200, { success: true, stdout: '', stderr: '', cwd });
     try {
@@ -449,10 +540,20 @@ async function route(req, res) {
     }
   }
 
+  if (req.method === 'POST' && p === '/api/terminal/cwd') {
+    const body = await readBody(req);
+    try {
+      const cwd = await resolveCwd(body.cwd || os.homedir(), body.target || '');
+      return json(res, 200, { success: true, cwd });
+    } catch (err) {
+      return json(res, 200, { success: false, cwd: safeCwd(body.cwd), error: err.message });
+    }
+  }
+
   // Streaming terminal execution (newline-delimited JSON events).
   if (req.method === 'POST' && p === '/api/terminal/stream') {
     const body = await readBody(req);
-    const workCwd = expandHome(body.cwd || os.homedir());
+    const workCwd = safeCwd(body.cwd || os.homedir());
     const command = String(body.command || '').trim();
     const profile = body.profile || 'powershell';
 
@@ -499,7 +600,7 @@ async function route(req, res) {
   // Path completion for the terminal autocomplete.
   if (req.method === 'POST' && p === '/api/fs/complete') {
     const body = await readBody(req);
-    const baseCwd = expandHome(body.cwd || os.homedir());
+    const baseCwd = safeCwd(body.cwd || os.homedir());
     const prefix = String(body.prefix || '');
     // Split prefix into dir + filename
     const dirPart = prefix.includes('/') || prefix.includes('\\')
@@ -532,7 +633,7 @@ async function route(req, res) {
   if (req.method === 'POST' && p === '/api/sources') {
     const body = await readBody(req);
     const list = loadSources();
-    const source = { id: `src-${Date.now()}`, status: 'configured', readOnly: false, ...body };
+    const source = { id: `src-${Date.now()}`, status: 'configured', readOnly: false, ...body, mock: false };
     list.push(source);
     saveSources(list);
     return json(res, 200, { success: true, source });

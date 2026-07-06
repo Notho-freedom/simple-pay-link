@@ -4,7 +4,7 @@ import { api } from '@/lib/apiClient';
 export interface Suggestion {
   value: string;
   hint?: string;
-  source: 'history' | 'catalog' | 'flag' | 'output' | 'fs';
+  source: 'history' | 'catalog' | 'flag' | 'output' | 'fs' | 'ai';
 }
 
 interface Options {

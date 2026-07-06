@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { history = [], lastCommand = '', lastOutput = '', cwd = '', profile = 'powershell' } = await req.json();
+    const { history = [], lastCommand = '', lastOutput = '', cwd = '', profile = 'powershell', prompt = '' } = await req.json();
 
     if (!LOVABLE_API_KEY) {
       return new Response(JSON.stringify({ suggestions: [], error: 'LOVABLE_API_KEY missing' }), {
@@ -17,11 +17,12 @@ Deno.serve(async (req) => {
       });
     }
 
-    const system = `Tu es un assistant terminal expert (${profile}). Étant donné la dernière commande, sa sortie, le dossier courant et l'historique récent, propose 1 à 3 commandes suivantes pertinentes, concises, prêtes à exécuter. Réponds STRICTEMENT en JSON: {"suggestions":["cmd1","cmd2"]}. Pas d'explication. Pas de markdown.`;
+    const system = `Tu es un assistant terminal expert (${profile}). Propose des commandes sûres, concises, prêtes à exécuter pour le dossier courant. Si l'utilisateur donne un objectif, transforme-le en 1 à 5 commandes candidates. Sinon, déduis la prochaine commande utile depuis la dernière sortie. Réponds STRICTEMENT en JSON: {"suggestions":["cmd1","cmd2"]}. Pas d'explication. Pas de markdown.`;
 
     const user = `cwd: ${cwd}
 historique récent: ${history.slice(-5).join(' | ')}
 dernière commande: ${lastCommand}
+objectif utilisateur: ${prompt}
 sortie tronquée:
 ${lastOutput.slice(-1000)}
 
@@ -31,7 +32,7 @@ Propose la ou les commandes suivantes utiles.`;
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
+        'Lovable-API-Key': LOVABLE_API_KEY,
       },
       body: JSON.stringify({
         model: 'google/gemini-2.5-flash',

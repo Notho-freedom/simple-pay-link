@@ -11,6 +11,8 @@ export interface ExplorerSource {
   host?: string;
   port?: number;
   secure?: boolean;
+  provider?: string;
+  mock?: boolean;
   status: ExplorerSourceStatus;
   readOnly: boolean;
   driveInfo?: {

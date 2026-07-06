@@ -15,7 +15,7 @@ export interface Tok {
 const RX_URL = /https?:\/\/[^\s"']+/g;
 const RX_IPPORT = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?\b/g;
 const RX_EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-const RX_HASH = /\b[a-f0-9]{7,40}\b/g;
+const RX_HASH = /\b(?=[a-f0-9]*[a-f])[a-f0-9]{7,40}\b/g;
 const RX_WINPATH = /(?:[A-Z]:\\|\\\\)[^\s"'|<>]+/g;
 const RX_UNIXPATH = /(?:\.{0,2}\/|~\/)[^\s"'|<>:,]+/g;
 const RX_PID = /\bPID[\s:]+(\d{2,7})\b/g;
@@ -30,6 +30,15 @@ function isDirName(name: string): boolean {
   return /\/$/.test(name) || /^d[rwx-]{9}/.test(name) || name.startsWith('<DIR>');
 }
 
+function looksLikeName(value: string): boolean {
+  if (!value || value.length > 160) return false;
+  if (/^\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}$/.test(value)) return false;
+  if (/^\d{1,2}:\d{2}(:\d{2})?(AM|PM)?$/i.test(value)) return false;
+  if (/^(AM|PM|Mode|LastWriteTime|Length|Name|Directory:)$/i.test(value)) return false;
+  if (/^[.,;:|]+$/.test(value)) return false;
+  return /[A-Za-zÀ-ÿ_.-]/.test(value);
+}
+
 /**
  * Detect PowerShell `Get-ChildItem`-style output rows:
  *   Mode                 LastWriteTime         Length Name
@@ -37,9 +46,31 @@ function isDirName(name: string): boolean {
  *   -a---          10/12/2025    12:34         1234   file.txt
  */
 function detectPsListing(line: string): { name: string; isDir: boolean } | null {
-  const m = /^\s*([dl-][rwx-]{4}|\S{1,6})\s+\d{1,4}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?\s+(?:\d+\s+)?(\S.*)$/.exec(line);
+  const m = /^\s*([dl-][rwxas-]{4,6}|\S{1,7})\s+\d{1,4}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\s+(?:\d+\s+)?(\S.*)$/.exec(line);
   if (!m) return null;
   return { name: m[2].trim(), isDir: m[1].startsWith('d') };
+}
+
+function detectCmdListing(line: string): { name: string; isDir: boolean } | null {
+  const m = /^\s*\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?\s+(<DIR>|[\d,]+)\s+(.+)$/.exec(line);
+  if (!m) return null;
+  return { name: m[2].trim(), isDir: m[1] === '<DIR>' };
+}
+
+function collectPlainNames(line: string): Range[] {
+  if (!line.trim()) return [];
+  if (/\b(Mode|LastWriteTime|Length|Name|Directory of|total)\b/i.test(line)) return [];
+  if (/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}\s+\d{1,2}:\d{2}/.test(line)) return [];
+  const ranges: Range[] = [];
+  const re = /[^\s]+/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line))) {
+    const text = m[0].replace(/[,:;]+$/g, '');
+    if (!looksLikeName(text)) continue;
+    const isDir = /\/$/.test(text) || !/\.[A-Za-z0-9]{1,8}$/.test(text);
+    ranges.push({ start: m.index, end: m.index + text.length, kind: isDir ? 'dir' : 'file', text, insert: quote(text.replace(/\/$/, '')) });
+  }
+  return ranges.length <= 12 ? ranges : [];
 }
 
 /**
@@ -79,6 +110,15 @@ export function tokenize(line: string): Tok[] {
       });
     }
   }
+  const cmd = (!ps && !unix) ? detectCmdListing(line) : null;
+  if (cmd) {
+    const start = line.lastIndexOf(cmd.name);
+    if (start >= 0) {
+      ranges.push({ start, end: start + cmd.name.length, kind: cmd.isDir ? 'dir' : 'file', text: cmd.name, insert: quote(cmd.name) });
+    }
+  }
+
+  if (!ps && !unix && !cmd) ranges.push(...collectPlainNames(line));
 
   const collect = (re: RegExp, kind: TokKind, buildInsert?: (m: RegExpExecArray) => string) => {
     re.lastIndex = 0;
@@ -114,8 +154,8 @@ export function tokenize(line: string): Tok[] {
 }
 
 export const TOK_CLASS: Record<TokKind, string> = {
-  dir: 'text-sky-300 hover:bg-sky-500/20 hover:text-sky-200 rounded px-0.5 cursor-pointer transition-colors',
-  file: 'text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200 rounded px-0.5 cursor-pointer transition-colors',
+  dir: 'text-sky-300 hover:bg-sky-500/20 hover:text-sky-200 rounded px-0.5 cursor-pointer transition-all hover:shadow-[0_0_10px_hsl(var(--primary)/0.25)]',
+  file: 'text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200 rounded px-0.5 cursor-pointer transition-all hover:shadow-[0_0_10px_hsl(var(--primary)/0.2)]',
   path: 'text-cyan-300 hover:bg-cyan-500/20 rounded px-0.5 cursor-pointer transition-colors underline decoration-cyan-400/30',
   url: 'text-blue-300 hover:bg-blue-500/20 rounded px-0.5 cursor-pointer transition-colors underline decoration-blue-400/40',
   ip: 'text-fuchsia-300 hover:bg-fuchsia-500/20 rounded px-0.5 cursor-pointer transition-colors',

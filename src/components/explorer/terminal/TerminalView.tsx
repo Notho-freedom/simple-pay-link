@@ -9,7 +9,7 @@ import { computeSuggestions, fetchFsCompletions, Suggestion } from './completion
 import { COMMANDS } from './commandCatalog';
 import type { ShellProfile } from './TerminalHeader';
 import { play as playSound } from '@/lib/sounds';
-import { Sparkles, Loader2, Square } from 'lucide-react';
+import { Loader2, Square } from 'lucide-react';
 
 export interface TerminalViewProps {
   id: string;
@@ -23,6 +23,7 @@ export interface TerminalViewProps {
   registerClear?: (fn: () => void) => void;
   registerCopyAll?: (fn: () => string) => void;
   registerFocusInput?: (fn: () => void) => void;
+  sessionKey?: string;
 }
 
 type LineKind = 'cmd' | 'out' | 'err' | 'sys';
@@ -37,6 +38,8 @@ interface Line {
 
 const HISTORY_KEY = 'terminal.history.v2';
 
+interface SavedTerminalState { lines?: Line[]; cwd?: string; input?: string; }
+
 function loadHistory(): string[] {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
 }
@@ -44,25 +47,36 @@ function saveHistory(h: string[]) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(-5000))); } catch { /* ignore */ }
 }
 
+function loadTerminalState(key?: string): SavedTerminalState | null {
+  if (!key) return null;
+  try { return JSON.parse(localStorage.getItem(`terminal.context.${key}`) || 'null'); } catch { return null; }
+}
+
+function saveTerminalState(key: string | undefined, state: SavedTerminalState) {
+  if (!key) return;
+  try { localStorage.setItem(`terminal.context.${key}`, JSON.stringify({ ...state, lines: state.lines?.slice(-600) })); } catch { /* ignore */ }
+}
+
 function playIf(sound: boolean, name: Parameters<typeof playSound>[0]) {
   if (sound) playSound(name);
 }
 
 export function TerminalView(props: TerminalViewProps) {
-  const [lines, setLines] = useState<Line[]>([
+  const saved = useMemo(() => loadTerminalState(props.sessionKey), [props.sessionKey]);
+  const [lines, setLines] = useState<Line[]>(saved?.lines?.length ? saved.lines : [
     { kind: 'sys', text: `— ${props.profile.toUpperCase()} · terminal cognitif — tape "help" ou Ctrl+Espace pour l'autocomplétion.` },
   ]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(saved?.input || '');
   const [history, setHistory] = useState<string[]>(() => loadHistory());
   const [histIdx, setHistIdx] = useState<number>(-1);
-  const [cwd, setCwd] = useState(props.initialCwd);
+  const [cwd, setCwd] = useState(saved?.cwd || props.initialCwd);
   const [running, setRunning] = useState(false);
   const [runStart, setRunStart] = useState(0);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIdx, setSuggestIdx] = useState(0);
   const [ghost, setGhost] = useState('');
-  const [aiChips, setAiChips] = useState<string[]>([]);
+  const [aiSuggestions, setAiSuggestions] = useState<Suggestion[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
   const [findMode, setFindMode] = useState(false);
   const [findQuery, setFindQuery] = useState('');
@@ -81,6 +95,7 @@ export function TerminalView(props: TerminalViewProps) {
   }, [lines, aiChips]);
 
   useEffect(() => { saveHistory(history); }, [history]);
+  useEffect(() => { saveTerminalState(props.sessionKey, { lines, cwd, input }); }, [props.sessionKey, lines, cwd, input]);
 
   useEffect(() => {
     props.registerClear?.(() => setLines([]));
@@ -196,10 +211,10 @@ export function TerminalView(props: TerminalViewProps) {
     });
   }, [appendChunk, cwd, props.profile, props.soundEnabled]);
 
-  const requestAiSuggestions = useCallback(async (lastCmd: string, tail: string) => {
+  const requestAiSuggestions = useCallback(async (lastCmd: string, tail: string, prompt?: string) => {
     if (!props.aiEnabled) return;
     setAiLoading(true);
-    setAiChips([]);
+    setAiSuggestions([]);
     try {
       const { supabase } = await import('@/integrations/supabase/client');
       const { data } = await supabase.functions.invoke('terminal-suggest', {
@@ -207,16 +222,42 @@ export function TerminalView(props: TerminalViewProps) {
           history: history.slice(-8),
           lastCommand: lastCmd,
           lastOutput: tail.slice(-1200),
+          prompt,
           cwd,
           profile: props.profile,
         },
       });
       if (data?.suggestions && Array.isArray(data.suggestions)) {
-        setAiChips(data.suggestions.filter((s: unknown) => typeof s === 'string').slice(0, 3));
+        const next = data.suggestions
+          .filter((s: unknown) => typeof s === 'string')
+          .slice(0, 5)
+          .map((value: string) => ({ value, hint: prompt ? 'commande proposée' : 'suite probable', source: 'ai' as const }));
+        setAiSuggestions(next);
+        if (next.length) {
+          setSuggestOpen(true);
+          setSuggestIdx(0);
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }
       }
     } catch { /* silent */ }
     setAiLoading(false);
   }, [props.aiEnabled, history, cwd, props.profile]);
+
+  const changeDirectory = useCallback(async (target: string) => {
+    try {
+      const r = await api.post<{ success: boolean; cwd?: string; error?: string }>('/api/terminal/cwd', { cwd, target });
+      if (r.success && r.cwd) {
+        setCwd(r.cwd);
+        appendLine({ kind: 'sys', text: `cwd → ${r.cwd}` });
+        playIf(props.soundEnabled, 'success');
+      } else {
+        appendLine({ kind: 'err', text: r.error || `cd: ${target}: dossier introuvable` });
+        playIf(props.soundEnabled, 'error');
+      }
+    } catch (err) {
+      appendLine({ kind: 'err', text: err instanceof Error ? err.message : 'cd impossible' });
+    }
+  }, [appendLine, cwd, props.soundEnabled]);
 
   const exec = useCallback(async (raw: string) => {
     const cmd = raw.trim();
@@ -224,7 +265,7 @@ export function TerminalView(props: TerminalViewProps) {
     if (!cmd) return;
     setHistory((prev) => [...prev, cmd]);
     setHistIdx(-1);
-    setAiChips([]);
+    setAiSuggestions([]);
 
     if (cmd === 'clear' || cmd === 'cls') {
       setLines([]);
@@ -235,32 +276,37 @@ export function TerminalView(props: TerminalViewProps) {
       return;
     }
     if (cmd === 'help') {
-      appendLine({ kind: 'sys', text: 'Commandes internes : clear/cls, exit, help. Tout le reste passe au shell réel.' });
-      appendLine({ kind: 'sys', text: 'Astuce : Tab accepte le ghost text, Ctrl+Espace ouvre les suggestions, clique un élément de sortie pour l\'insérer.' });
+      appendLine({ kind: 'sys', text: 'Commandes internes : clear/cls, exit, help, cd, ai <objectif>. Tout le reste passe au shell réel.' });
+      appendLine({ kind: 'sys', text: 'Tab accepte le ghost text · Ctrl+Espace ouvre les suggestions · clique un nom/IP/chemin pour l\'insérer.' });
       return;
     }
 
-    // cd tracked to keep cwd in sync (still executes on the shell).
-    const result = await executeShell(cmd);
-    if (/^cd(\s|$)/.test(cmd)) {
-      // Query real cwd
-      try {
-        const r = await api.post<{ success: boolean; stdout?: string }>('/api/terminal/exec', {
-          cwd, command: props.profile === 'powershell' ? '(Get-Location).Path' : 'pwd',
-        });
-        if (r.success && r.stdout?.trim()) setCwd(r.stdout.trim());
-      } catch { /* ignore */ }
+    if (/^cd(?:\s|$)/i.test(cmd)) {
+      await changeDirectory(cmd.replace(/^cd(?:\s+)?/i, ''));
+      setTimeout(() => inputRef.current?.focus(), 0);
+      return;
     }
 
+    if (/^(?:ai|@ai|\?)\s+/i.test(cmd)) {
+      const prompt = cmd.replace(/^(?:ai|@ai|\?)\s+/i, '').trim();
+      appendLine({ kind: 'sys', text: 'Génération de commandes candidates…' });
+      await requestAiSuggestions('prompt', '', prompt);
+      return;
+    }
+
+    const result = await executeShell(cmd);
+    setTimeout(() => inputRef.current?.focus(), 0);
     requestAiSuggestions(cmd, result.stdout + '\n' + result.stderr);
-  }, [appendLine, cwd, executeShell, promptText, props, requestAiSuggestions]);
+  }, [appendLine, changeDirectory, executeShell, promptText, props, requestAiSuggestions]);
 
   // Compute suggestions + ghost text on each input change
   useEffect(() => {
     const local = computeSuggestions({ input, history, outputTokens, cwd });
-    setSuggestions(local);
+    const ai = aiSuggestions.filter((s) => !input || s.value.toLowerCase().startsWith(input.toLowerCase()));
+    const merged = [...ai, ...local.filter((s) => !ai.some((a) => a.value === s.value))].slice(0, 12);
+    setSuggestions(merged);
     setSuggestIdx(0);
-    setGhost(local[0] && local[0].value.startsWith(input) && local[0].value !== input ? local[0].value.slice(input.length) : '');
+    setGhost(merged[0] && merged[0].value.startsWith(input) && merged[0].value !== input ? merged[0].value.slice(input.length) : '');
 
     // Async FS completions if the current tail looks like a path
     const parts = input.split(/\s+/);
@@ -280,7 +326,7 @@ export function TerminalView(props: TerminalViewProps) {
         });
       });
     }
-  }, [input, history, outputTokens, cwd]);
+  }, [input, history, outputTokens, cwd, aiSuggestions]);
 
   const acceptGhost = () => {
     if (!ghost) return;
@@ -311,7 +357,10 @@ export function TerminalView(props: TerminalViewProps) {
       setSuggestOpen(false);
     } else if (e.key === 'Tab') {
       e.preventDefault();
-      if (ghost) acceptGhost();
+      if (suggestOpen && suggestions[suggestIdx]) {
+        setInput(suggestions[suggestIdx].value);
+        setSuggestOpen(false);
+      } else if (ghost) acceptGhost();
       else if (suggestions[0]) setInput(suggestions[0].value);
     } else if (e.key === 'ArrowRight' && ghost && (e.currentTarget.selectionStart ?? 0) === input.length) {
       e.preventDefault();
@@ -408,25 +457,6 @@ export function TerminalView(props: TerminalViewProps) {
           <LineRow key={i} line={l} findQuery={findQuery} onInsertToken={insertToken} />
         ))}
 
-        {/* AI chips */}
-        {(aiLoading || aiChips.length > 0) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 animate-fade-in">
-            <Sparkles size={10} className="text-primary" />
-            {aiLoading && <span className="text-[10px] text-muted-foreground italic">L'IA réfléchit…</span>}
-            {aiChips.map((chip, i) => (
-              <button
-                key={i}
-                onClick={() => { setInput(chip); inputRef.current?.focus(); playIf(props.soundEnabled, 'click'); }}
-                className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 transition-all hover:scale-105 animate-slide-in-right"
-                style={{ animationDelay: `${i * 60}ms` }}
-                title="Cliquer pour insérer"
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* Prompt line */}
         <div className="flex items-center relative mt-0.5">
           <StatusDot running={running} />
@@ -455,15 +485,17 @@ export function TerminalView(props: TerminalViewProps) {
             />
 
             {/* Suggestion popup */}
-            {suggestOpen && suggestions.length > 0 && (
-              <div className="absolute left-0 top-5 z-20 glass-menu rounded-lg py-1 min-w-[260px] max-w-[420px] shadow-2xl border border-border/40 animate-scale-in">
+            {(suggestOpen || aiLoading) && (suggestions.length > 0 || aiLoading) && (
+              <div className="absolute left-0 top-5 z-20 glass-menu rounded-lg py-1 min-w-[300px] max-w-[520px] shadow-2xl border border-border/40 animate-scale-in terminal-suggest-pop">
+                {aiLoading && <div className="px-2.5 py-1 text-[10px] text-muted-foreground font-mono terminal-thinking-bar" />}
                 {suggestions.map((s, i) => (
                   <button
                     key={s.value + i}
                     onMouseDown={(e) => { e.preventDefault(); setInput(s.value); setSuggestOpen(false); inputRef.current?.focus(); }}
                     className={cn(
-                      'w-full text-left px-2.5 py-1 text-[11px] flex items-center gap-2 font-mono',
+                      'w-full text-left px-2.5 py-1 text-[11px] flex items-center gap-2 font-mono transition-all',
                       i === suggestIdx ? 'bg-primary/15 text-foreground' : 'hover:bg-[hsl(var(--explorer-hover))]',
+                      s.source === 'ai' && 'terminal-ai-suggestion',
                     )}
                   >
                     <span className="flex-1 truncate">{s.value}</span>
@@ -495,7 +527,7 @@ function StatusDot({ running }: { running: boolean }) {
     <span
       className={cn(
         'inline-block w-1.5 h-1.5 rounded-full mr-1.5 shrink-0',
-        running ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400',
+        running ? 'bg-amber-400 animate-pulse shadow-[0_0_12px_rgba(251,191,36,0.55)]' : 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.4)]',
       )}
     />
   );
