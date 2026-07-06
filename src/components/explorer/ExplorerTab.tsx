@@ -29,6 +29,7 @@ import { explorerToast } from '@/components/explorer/ExplorerToasts';
 import { CTX_EVENT, OpenCtxDetail } from '@/lib/contextMenuBus';
 import { useExplorerSources } from '@/hooks/useExplorerSources';
 import type { FileItem } from '@/types/fileExplorer';
+import type { LocalServer } from '@/data/localServers';
 
 interface Props {
   active: boolean;
@@ -75,6 +76,7 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
   const [propertiesId, setPropertiesId] = useState<string | null>(null);
   const [showGithub, setShowGithub] = useState(false);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  const [activeServerDetail, setActiveServerDetail] = useState<LocalServer | null>(null);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
   const [activeSourcePath, setActiveSourcePath] = useState('/');
   const [activeSourceFile, setActiveSourceFile] = useState<FileItem | null>(null);
@@ -116,6 +118,7 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
   const handleNavigate = useCallback((id: string) => {
     setShowGithub(false);
     setActiveServerId(null);
+    setActiveServerDetail(null);
     setActiveSourceId(null);
     setActiveSourcePath('/');
     setActiveSourceFile(null);
@@ -123,12 +126,13 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
     explorer.navigateTo(id);
   }, [explorer, play]);
   const handleNavigateVirtual = useCallback((id: 'this-pc' | 'network' | 'trash' | 'quick-access') => {
-    setShowGithub(false); setActiveServerId(null); setActiveSourceId(null); setActiveSourcePath('/'); setActiveSourceFile(null); play('click'); explorer.navigateToLocation({ type: 'virtual', id });
+    setShowGithub(false); setActiveServerId(null); setActiveServerDetail(null); setActiveSourceId(null); setActiveSourcePath('/'); setActiveSourceFile(null); play('click'); explorer.navigateToLocation({ type: 'virtual', id });
   }, [explorer, play]);
 
   const handleOpenSource = useCallback((id: string, path = '/') => {
     setShowGithub(false);
     setActiveServerId(null);
+    setActiveServerDetail(null);
     setActiveSourceId(id);
     setActiveSourcePath(path || '/');
     setActiveSourceFile(null);
@@ -371,7 +375,7 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
 
   const virtualId = explorer.nav.location.type === 'virtual' ? explorer.nav.location.id : null;
   const isMobileRoot = explorer.nav.currentFolderId === 'mobile-root';
-  const activeServer = activeServerId ? localServers.find(s => s.id === activeServerId) : null;
+  const activeServer = activeServerDetail || (activeServerId ? localServers.find(s => s.id === activeServerId) : null);
   const activeSource = activeSourceId ? sourceApi.sources.find(s => s.id === activeSourceId) : null;
   const activeSourceCwd = activeSource?.root
     ? `${activeSource.root.replace(/[\\/]+$/, '')}${activeSourcePath === '/' ? '' : `${activeSource.root.includes('\\') ? '\\' : '/'}${activeSourcePath.replace(/^\/+/, '').replace(/\//g, activeSource.root.includes('\\') ? '\\' : '/')}`}`
@@ -402,6 +406,7 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
       // Ensure GitHub panel is visible; GitHubPanel listens for the same event to open the repo
       setShowGithub(true);
       setActiveServerId(null);
+      setActiveServerDetail(null);
       setActiveSourceId(null);
     };
     window.addEventListener('explorer-nav', onNav);
@@ -525,9 +530,9 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
                 onNavigate={handleNavigate}
                 onNavigateVirtual={handleNavigateVirtual}
                 onToggleExpand={explorer.toggleExpanded}
-                onOpenGithub={() => { setActiveServerId(null); setActiveSourceId(null); setActiveSourcePath('/'); setShowGithub(true); }}
+                onOpenGithub={() => { setActiveServerId(null); setActiveServerDetail(null); setActiveSourceId(null); setActiveSourcePath('/'); setShowGithub(true); }}
                 onOpenRepo={(repo) => {
-                  setActiveServerId(null); setActiveSourceId(null); setActiveSourcePath('/'); setShowGithub(true);
+                  setActiveServerId(null); setActiveServerDetail(null); setActiveSourceId(null); setActiveSourcePath('/'); setShowGithub(true);
                   window.dispatchEvent(new CustomEvent('github:open-repo', { detail: { fullName: repo.full_name } }));
                 }}
                 githubActive={showGithub}
@@ -569,7 +574,7 @@ export function ExplorerTab({ active, initialFolderId, onFolderChange, onOpenCom
                     onNavigate={handleNavigate}
                     mode="network"
                     onOpenSource={handleOpenSource}
-                    onOpenLocalServer={(id) => { setShowGithub(false); setActiveSourceId(null); setActiveServerId(id); }}
+                    onOpenLocalServer={(id, server) => { setShowGithub(false); setActiveSourceId(null); setActiveServerId(id); setActiveServerDetail(server || null); }}
                   />
                 ) : isMobileRoot ? (
                   <MobileDeviceView onNavigate={handleNavigate} />

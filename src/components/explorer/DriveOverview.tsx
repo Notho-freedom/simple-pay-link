@@ -16,7 +16,7 @@ import type { LocalServer } from '@/data/localServers';
 interface Props {
   onNavigate: (id: string) => void;
   onNavigateTrash?: () => void;
-  onOpenLocalServer?: (id: string) => void;
+  onOpenLocalServer?: (id: string, server?: LocalServer) => void;
   onOpenSource?: (id: string, path?: string) => void;
   mode: 'this-pc' | 'network';
 }
@@ -122,7 +122,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
           {(detectedServers.length ? detectedServers : []).map((server) => (
             <div
               key={server.id}
-              onClick={() => onOpenLocalServer?.(server.id)}
+              onClick={() => onOpenLocalServer?.(server.id, server)}
               onContextMenu={(e) => openContextMenu(e, {
                 isBackground: false,
                 isServer: true,
@@ -133,7 +133,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
                 selectedCount: 1,
                 targetId: server.id,
               }, async (actionId) => {
-                if (actionId === 'open') onOpenLocalServer?.(server.id);
+                if (actionId === 'open') onOpenLocalServer?.(server.id, server);
                 else if (actionId === 'server.browser' || actionId === 'copy.url') {
                   if (actionId === 'server.browser') window.open(server.url, '_blank', 'noopener,noreferrer');
                   else { await navigator.clipboard?.writeText(server.url); explorerToast.success('URL copiée', server.url); }

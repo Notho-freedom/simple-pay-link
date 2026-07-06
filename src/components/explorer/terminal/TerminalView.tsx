@@ -92,7 +92,7 @@ export function TerminalView(props: TerminalViewProps) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [lines, aiChips]);
+  }, [lines, aiSuggestions, aiLoading]);
 
   useEffect(() => { saveHistory(history); }, [history]);
   useEffect(() => { saveTerminalState(props.sessionKey, { lines, cwd, input }); }, [props.sessionKey, lines, cwd, input]);
