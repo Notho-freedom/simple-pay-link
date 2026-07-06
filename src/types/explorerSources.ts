@@ -1,6 +1,6 @@
 import type { FileItem } from './fileExplorer';
 
-export type ExplorerSourceType = 'mock' | 'local' | 'network' | 'ftp' | 'cloud';
+export type ExplorerSourceType = 'mock' | 'local' | 'network' | 'ftp' | 'webdav' | 'cloud';
 export type ExplorerSourceStatus = 'connected' | 'configured' | 'disconnected' | 'error';
 
 export interface ExplorerSource {
