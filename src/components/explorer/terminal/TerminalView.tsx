@@ -15,6 +15,7 @@ import { Square } from 'lucide-react';
 import { assessDanger } from './agent/dangerous';
 import { AgentSteps, type AgentStep } from './agent/AgentSteps';
 import { ConfirmDangerousDialog } from './agent/ConfirmDangerousDialog';
+import { callAI } from '@/lib/aiProviders';
 
 export interface TerminalViewProps {
   id: string;
@@ -229,43 +230,43 @@ export function TerminalView(props: TerminalViewProps) {
     setAiLoadingLabel(prompt ? 'IA construit la commande…' : 'IA analyse la sortie…');
     setAiSuggestions([]);
     try {
-      const { supabase } = await import('@/integrations/supabase/client');
-      const { data } = await supabase.functions.invoke('terminal-suggest', {
-        body: {
-          mode: 'suggest',
-          history: history.slice(-8),
-          lastCommand: lastCmd,
-          lastOutput: tail.slice(-1200),
-          prompt,
-          cwd,
-          profile: props.profile,
+      const res = await callAI({
+        mode: 'suggest',
+        history: history.slice(-8),
+        lastCommand: lastCmd,
+        lastOutput: tail.slice(-1200),
+        prompt,
+        cwd,
+        profile: props.profile,
+      }, {
+        onSwitch: (from, to, err) => {
+          appendLine({ kind: 'sys', text: `↻ IA : ${from} indisponible (${err.slice(0, 80)}), bascule → ${to}` });
         },
       });
-      if (data?.suggestions && Array.isArray(data.suggestions)) {
-        const rawCmds = data.suggestions.filter((s: unknown) => typeof s === 'string').slice(0, 5) as string[];
-        cacheSuggestions(rawCmds); // enrichir le cache pour les prochaines saisies
+      const rawCmds = res.suggestions || [];
+      if (rawCmds.length) {
+        cacheSuggestions(rawCmds);
         const next = rawCmds.map((value: string) => ({ value, hint: prompt ? 'commande proposée' : 'suite probable', source: 'ai' as const }));
         setAiSuggestions(next);
-        if (next.length) {
-          setSuggestOpen(true);
-          setSuggestIdx(0);
-          setTimeout(() => inputRef.current?.focus(), 0);
-        }
+        setSuggestOpen(true);
+        setSuggestIdx(0);
+        setTimeout(() => inputRef.current?.focus(), 0);
       }
-    } catch { /* silent */ }
+    } catch (err) {
+      appendLine({ kind: 'err', text: `IA indisponible : ${err instanceof Error ? err.message : 'erreur'}` });
+    }
     setAiLoading(false);
-  }, [props.aiEnabled, history, cwd, props.profile]);
+  }, [props.aiEnabled, history, cwd, props.profile, appendLine]);
 
   const explainCommand = useCallback(async (target: string) => {
     if (!props.aiEnabled) { appendLine({ kind: 'err', text: 'IA désactivée — ré-active-la dans la barre du terminal.' }); return; }
     setAiLoading(true);
     setAiLoadingLabel('IA explique la commande…');
     try {
-      const { supabase } = await import('@/integrations/supabase/client');
-      const { data } = await supabase.functions.invoke('terminal-suggest', {
-        body: { mode: 'explain', prompt: target, cwd, profile: props.profile },
+      const res = await callAI({ mode: 'explain', prompt: target, cwd, profile: props.profile }, {
+        onSwitch: (from, to, err) => appendLine({ kind: 'sys', text: `↻ ${from} → ${to} (${err.slice(0, 60)})` }),
       });
-      const explanation = (data?.explanation || '').trim();
+      const explanation = (res.explanation || '').trim();
       if (explanation) explanation.split('\n').forEach((l: string) => appendLine({ kind: 'sys', text: `  ${l}` }));
       else appendLine({ kind: 'err', text: 'IA n\'a rien renvoyé.' });
     } catch (err) {
@@ -324,11 +325,12 @@ export function TerminalView(props: TerminalViewProps) {
     updateStep('understand', { status: 'ok' });
     updateStep('detect', { status: projectContext ? 'ok' : 'ok', detail: projectContext.split('\n')[0] || 'contexte minimal' });
 
-    const MAX_ITER = 12;
+    const MAX_ITER = 20;
     let lastCmd = '';
     let lastOut = '';
     let lastCode = 0;
     let successiveFailures = 0;
+    let aiErrorStreak = 0; // fournisseurs IA en chaîne d'échec
 
     for (let i = 1; i <= MAX_ITER; i++) {
       if (autoAbortRef.current) { appendLine({ kind: 'err', text: '⏹ AUTO interrompu (Ctrl+C)' }); break; }
@@ -339,28 +341,50 @@ export function TerminalView(props: TerminalViewProps) {
       setAiLoadingLabel(`Agent · itération ${i}/${MAX_ITER}`);
 
       let decision: { action: string; command?: string; reason?: string; summary?: string; step?: string } = { action: 'abort' };
+      let recoverFromError: string | undefined;
+      let iaOk = false;
       try {
-        const { supabase } = await import('@/integrations/supabase/client');
-        const { data, error } = await supabase.functions.invoke('terminal-suggest', {
-          body: {
-            mode: 'agent',
-            goal, cwd, profile: props.profile,
-            lastCommand: lastCmd,
-            lastOutput: lastOut.slice(-1800),
-            lastCode,
-            iteration: i,
-            projectContext,
+        const res = await callAI({
+          mode: 'agent',
+          goal, cwd, profile: props.profile,
+          lastCommand: lastCmd,
+          lastOutput: lastOut.slice(-1800),
+          lastCode,
+          iteration: i,
+          projectContext,
+          recoverFromError,
+        }, {
+          onSwitch: (from, to, err) => {
+            appendLine({ kind: 'sys', text: `↻ IA : ${from} indisponible → bascule vers ${to} (${err.slice(0, 80)})` });
           },
         });
-        if (error) throw error;
-        decision = data || decision;
+        decision = {
+          action: res.action || 'abort',
+          command: res.command,
+          reason: res.reason,
+          summary: res.summary,
+          step: res.step,
+        };
+        iaOk = true;
+        aiErrorStreak = 0;
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'erreur inconnue';
-        updateStep(stepId, { status: 'error', detail: `IA indisponible : ${msg}` });
-        appendLine({ kind: 'err', text: `⚠ agent : IA indisponible — ${msg}` });
-        break;
+        aiErrorStreak += 1;
+        updateStep(stepId, { status: 'error', detail: `Tous fournisseurs IA en échec : ${msg}` });
+        appendLine({ kind: 'err', text: `⚠ agent · IA HS (essai ${aiErrorStreak}/3) — ${msg}` });
+        if (aiErrorStreak >= 3) {
+          appendLine({ kind: 'err', text: '⏹ AGENT : 3 échecs IA consécutifs, abandon. Ajoute un fournisseur dans les paramètres.' });
+          break;
+        }
+        // Re-tente la même itération après un court délai — l'auto-switch dans callAI a déjà tourné.
+        await new Promise((r) => setTimeout(r, 1500));
+        i -= 1; // rejouer l'itération
+        setAiLoading(false);
+        continue;
       }
       setAiLoading(false);
+      if (!iaOk) continue;
+
 
       const label = decision.step || `Itération ${i}`;
       updateStep(stepId, { label, detail: decision.command || decision.reason || decision.summary || '' });
@@ -745,7 +769,7 @@ export function TerminalView(props: TerminalViewProps) {
             steps={agentSteps}
             goal={autoLoop?.goal || ''}
             iter={autoLoop?.iter || 0}
-            max={12}
+            max={20}
             onAbort={autoLoop?.active ? () => { autoAbortRef.current = true; } : undefined}
           />
         )}
@@ -755,7 +779,7 @@ export function TerminalView(props: TerminalViewProps) {
           <StatusDot running={running} />
           {autoLoop?.active && (
             <span className="mr-1.5 shrink-0 text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-400/30 animate-pulse">
-              AGENT · {autoLoop.iter}/12
+              AGENT · {autoLoop.iter}/20
             </span>
           )}
           <span className="shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
