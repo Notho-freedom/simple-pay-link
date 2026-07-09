@@ -1,4 +1,5 @@
 import { COMMANDS, findCommand, findFlag } from './commandCatalog';
+import { getCachedSuggestions } from './suggestionCache';
 import { api } from '@/lib/apiClient';
 
 export interface Suggestion {
@@ -35,7 +36,14 @@ export function computeSuggestions({ input, history, outputTokens }: Options): S
     }
   }
 
-  // 2. Command catalog
+  // 2. Cached AI suggestions (persisted across sessions)
+  if (input) {
+    for (const cmd of getCachedSuggestions(input, 4)) {
+      if (!seen.has(cmd)) { seen.add(cmd); out.push({ value: cmd, hint: 'cache IA', source: 'ai' }); }
+    }
+  }
+
+  // 3. Command catalog
   if (isFirst && head) {
     for (const c of findCommand(head)) {
       if (!seen.has(c.name)) {

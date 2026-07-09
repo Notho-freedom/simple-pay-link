@@ -3,6 +3,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 import { cn } from '@/lib/utils';
 import { TerminalHeader, ShellProfile } from './terminal/TerminalHeader';
 import { TerminalView } from './terminal/TerminalView';
+import { AgentChatPane } from './terminal/agent/AgentChatPane';
 import { X } from 'lucide-react';
 
 interface Props {
@@ -60,6 +61,9 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
   const clearFns = useRef<Record<string, () => void>>({});
   const copyAllFns = useRef<Record<string, () => string>>({});
   const focusFns = useRef<Record<string, () => void>>({});
+  const runAgentFns = useRef<Record<string, (goal: string) => Promise<void>>>({});
+  const chatFns = useRef<Record<string, (t: string, h: { role: string; content: string }[]) => Promise<string>>>({});
+  const [chatOpen, setChatOpen] = useState(false);
 
   const persist = (patch: Partial<Prefs>) => {
     const next = { ai, sound, profile, ...patch };
@@ -126,6 +130,8 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
         registerClear={(fn) => { clearFns.current[pane.id] = fn; }}
         registerCopyAll={(fn) => { copyAllFns.current[pane.id] = fn; }}
         registerFocusInput={(fn) => { focusFns.current[pane.id] = fn; }}
+        registerRunAgent={(fn) => { runAgentFns.current[pane.id] = fn; }}
+        registerChatAI={(fn) => { chatFns.current[pane.id] = fn; }}
         sessionKey={`${panelSessionKey.current}:${pane.id}`}
       />
     </div>
@@ -154,10 +160,41 @@ export function TerminalPanel({ open, cwd, cwdName, cwdPath, onClose, fill, onOp
         onClose={onClose}
         onOpenInTab={onOpenInTab}
         running={false}
+        chatOpen={chatOpen}
+        onToggleChat={() => setChatOpen((v) => !v)}
       />
 
       <div className="flex-1 min-h-0">
-        {panes.length === 1 ? (
+        {chatOpen ? (
+          <ResizablePanelGroup direction="horizontal">
+            <ResizablePanel defaultSize={30} minSize={20} maxSize={55}>
+              <AgentChatPane
+                onClose={() => setChatOpen(false)}
+                onGoal={(goal) => runAgentFns.current[activePane]?.(goal)}
+                onChat={async (text, hist) => {
+                  const fn = chatFns.current[activePane];
+                  if (!fn) return 'Chat IA indisponible.';
+                  return fn(text, hist);
+                }}
+              />
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={70} minSize={30}>
+              {panes.length === 1 ? renderPane(panes[0], false) : (
+                <ResizablePanelGroup direction={splitDir}>
+                  {panes.flatMap((pane, i) => {
+                    const el = (
+                      <ResizablePanel key={pane.id} defaultSize={100 / panes.length} minSize={15}>
+                        <div className="group h-full w-full">{renderPane(pane, panes.length > 1)}</div>
+                      </ResizablePanel>
+                    );
+                    return i < panes.length - 1 ? [el, <ResizableHandle key={`h-${pane.id}`} />] : [el];
+                  })}
+                </ResizablePanelGroup>
+              )}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        ) : panes.length === 1 ? (
           renderPane(panes[0], false)
         ) : (
           <ResizablePanelGroup direction={splitDir}>

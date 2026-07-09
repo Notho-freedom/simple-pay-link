@@ -136,3 +136,16 @@ export const fbFile = svg(
   `<path fill="#90a4ae" d="M8 3h11l7 7v17a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>` +
   `<path fill="#cfd8dc" d="M19 3v7h7z"/>`
 );
+
+// Convenience map from a FileType to its inline SVG fallback
+import type { FileType } from '@/types/fileExplorer';
+
+export function getFallbackIcon(type: FileType | string | undefined): string {
+  switch (type) {
+    case 'folder': return fbFolder;
+    case 'image': return fbFile;
+    case 'video': return fbFile;
+    case 'audio': return fbFile;
+    default: return fbFile;
+  }
+}

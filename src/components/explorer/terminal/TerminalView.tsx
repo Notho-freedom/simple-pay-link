@@ -6,10 +6,15 @@ import { openStream, StreamHandle } from '@/lib/sse';
 import { highlight, HL_CLASS } from './highlight';
 import { tokenize, TOK_CLASS, Tok } from './tokenize';
 import { computeSuggestions, fetchFsCompletions, Suggestion } from './completions';
+import { cacheSuggestions, bumpSuggestionUse } from './suggestionCache';
 import { COMMANDS } from './commandCatalog';
 import type { ShellProfile } from './TerminalHeader';
-import { play as playSound } from '@/lib/sounds';
-import { Loader2, Square } from 'lucide-react';
+import { play as playSound, playKey } from '@/lib/sounds';
+import { NpmSpinner } from './NpmSpinner';
+import { Square } from 'lucide-react';
+import { assessDanger } from './agent/dangerous';
+import { AgentSteps, type AgentStep } from './agent/AgentSteps';
+import { ConfirmDangerousDialog } from './agent/ConfirmDangerousDialog';
 
 export interface TerminalViewProps {
   id: string;
@@ -23,6 +28,8 @@ export interface TerminalViewProps {
   registerClear?: (fn: () => void) => void;
   registerCopyAll?: (fn: () => string) => void;
   registerFocusInput?: (fn: () => void) => void;
+  registerRunAgent?: (fn: (goal: string) => Promise<void>) => void;
+  registerChatAI?: (fn: (text: string, history: { role: string; content: string }[]) => Promise<string>) => void;
   sessionKey?: string;
 }
 
@@ -78,6 +85,11 @@ export function TerminalView(props: TerminalViewProps) {
   const [ghost, setGhost] = useState('');
   const [aiSuggestions, setAiSuggestions] = useState<Suggestion[]>([]);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoadingLabel, setAiLoadingLabel] = useState('IA analyse la sortie…');
+  const [autoLoop, setAutoLoop] = useState<{ active: boolean; iter: number; goal: string } | null>(null);
+  const autoAbortRef = useRef(false);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [dangerPrompt, setDangerPrompt] = useState<{ command: string; reason: string; resolve: (ok: boolean) => void } | null>(null);
   const [findMode, setFindMode] = useState(false);
   const [findQuery, setFindQuery] = useState('');
 
@@ -214,11 +226,13 @@ export function TerminalView(props: TerminalViewProps) {
   const requestAiSuggestions = useCallback(async (lastCmd: string, tail: string, prompt?: string) => {
     if (!props.aiEnabled) return;
     setAiLoading(true);
+    setAiLoadingLabel(prompt ? 'IA construit la commande…' : 'IA analyse la sortie…');
     setAiSuggestions([]);
     try {
       const { supabase } = await import('@/integrations/supabase/client');
       const { data } = await supabase.functions.invoke('terminal-suggest', {
         body: {
+          mode: 'suggest',
           history: history.slice(-8),
           lastCommand: lastCmd,
           lastOutput: tail.slice(-1200),
@@ -228,10 +242,9 @@ export function TerminalView(props: TerminalViewProps) {
         },
       });
       if (data?.suggestions && Array.isArray(data.suggestions)) {
-        const next = data.suggestions
-          .filter((s: unknown) => typeof s === 'string')
-          .slice(0, 5)
-          .map((value: string) => ({ value, hint: prompt ? 'commande proposée' : 'suite probable', source: 'ai' as const }));
+        const rawCmds = data.suggestions.filter((s: unknown) => typeof s === 'string').slice(0, 5) as string[];
+        cacheSuggestions(rawCmds); // enrichir le cache pour les prochaines saisies
+        const next = rawCmds.map((value: string) => ({ value, hint: prompt ? 'commande proposée' : 'suite probable', source: 'ai' as const }));
         setAiSuggestions(next);
         if (next.length) {
           setSuggestOpen(true);
@@ -242,6 +255,185 @@ export function TerminalView(props: TerminalViewProps) {
     } catch { /* silent */ }
     setAiLoading(false);
   }, [props.aiEnabled, history, cwd, props.profile]);
+
+  const explainCommand = useCallback(async (target: string) => {
+    if (!props.aiEnabled) { appendLine({ kind: 'err', text: 'IA désactivée — ré-active-la dans la barre du terminal.' }); return; }
+    setAiLoading(true);
+    setAiLoadingLabel('IA explique la commande…');
+    try {
+      const { supabase } = await import('@/integrations/supabase/client');
+      const { data } = await supabase.functions.invoke('terminal-suggest', {
+        body: { mode: 'explain', prompt: target, cwd, profile: props.profile },
+      });
+      const explanation = (data?.explanation || '').trim();
+      if (explanation) explanation.split('\n').forEach((l: string) => appendLine({ kind: 'sys', text: `  ${l}` }));
+      else appendLine({ kind: 'err', text: 'IA n\'a rien renvoyé.' });
+    } catch (err) {
+      appendLine({ kind: 'err', text: `IA indisponible : ${err instanceof Error ? err.message : 'erreur'}` });
+    }
+    setAiLoading(false);
+  }, [appendLine, props.aiEnabled, cwd, props.profile]);
+
+  const askDanger = useCallback((command: string, reason: string) => new Promise<boolean>((resolve) => {
+    setDangerPrompt({ command, reason, resolve });
+  }), []);
+
+  const detectProject = useCallback(async (dir: string): Promise<string> => {
+    try {
+      const r = await api.get<{ success: boolean; items?: Array<{ name: string; type: string }> }>(`/api/fs/list?path=${encodeURIComponent(dir)}`);
+      if (!r.success || !r.items) return '';
+      const names = new Set(r.items.map((it) => it.name.toLowerCase()));
+      const hints: string[] = [];
+      if (names.has('package.json')) hints.push('Node/JS (package.json)');
+      if (names.has('bun.lockb') || names.has('bun.lock')) hints.push('Bun (bun.lock)');
+      if (names.has('pnpm-lock.yaml')) hints.push('pnpm');
+      if (names.has('yarn.lock')) hints.push('Yarn');
+      if (names.has('cargo.toml')) hints.push('Rust (Cargo.toml)');
+      if (names.has('pyproject.toml') || names.has('requirements.txt') || names.has('setup.py')) hints.push('Python');
+      if (names.has('makefile')) hints.push('Makefile');
+      if (names.has('go.mod')) hints.push('Go');
+      if (names.has('pom.xml')) hints.push('Maven/Java');
+      if (names.has('build.gradle') || names.has('build.gradle.kts')) hints.push('Gradle');
+      if (names.has('composer.json')) hints.push('PHP/Composer');
+      if (names.has('dockerfile')) hints.push('Docker');
+      if (names.has('vite.config.ts') || names.has('vite.config.js')) hints.push('Vite');
+      const files = r.items.filter((it) => it.type === 'file').slice(0, 40).map((it) => it.name).join(', ');
+      const dirs = r.items.filter((it) => it.type === 'directory').slice(0, 20).map((it) => it.name).join(', ');
+      return `Techno détectée : ${hints.join(', ') || 'inconnue'}\nFichiers : ${files}\nDossiers : ${dirs}`;
+    } catch { return ''; }
+  }, []);
+
+  const updateStep = useCallback((id: string, patch: Partial<AgentStep>) => {
+    setAgentSteps((prev) => prev.map((s) => s.id === id ? { ...s, ...patch } : s));
+  }, []);
+  const addStep = useCallback((step: AgentStep) => {
+    setAgentSteps((prev) => [...prev, step]);
+  }, []);
+
+  const runAgentLoop = useCallback(async (goal: string) => {
+    if (!props.aiEnabled) { appendLine({ kind: 'err', text: 'IA désactivée — impossible de lancer --auto.' }); return; }
+    autoAbortRef.current = false;
+    setAutoLoop({ active: true, iter: 0, goal });
+    setAgentSteps([
+      { id: 'understand', label: 'Compréhension de l\'objectif', status: 'running', detail: goal },
+      { id: 'detect', label: 'Détection du projet', status: 'pending' },
+    ]);
+
+    // 1. Detect project
+    const projectContext = await detectProject(cwd);
+    updateStep('understand', { status: 'ok' });
+    updateStep('detect', { status: projectContext ? 'ok' : 'ok', detail: projectContext.split('\n')[0] || 'contexte minimal' });
+
+    const MAX_ITER = 12;
+    let lastCmd = '';
+    let lastOut = '';
+    let lastCode = 0;
+    let successiveFailures = 0;
+
+    for (let i = 1; i <= MAX_ITER; i++) {
+      if (autoAbortRef.current) { appendLine({ kind: 'err', text: '⏹ AUTO interrompu (Ctrl+C)' }); break; }
+      setAutoLoop({ active: true, iter: i, goal });
+      const stepId = `iter-${i}`;
+      addStep({ id: stepId, label: `Itération ${i}`, status: 'running', detail: 'Décision en cours…' });
+      setAiLoading(true);
+      setAiLoadingLabel(`Agent · itération ${i}/${MAX_ITER}`);
+
+      let decision: { action: string; command?: string; reason?: string; summary?: string; step?: string } = { action: 'abort' };
+      try {
+        const { supabase } = await import('@/integrations/supabase/client');
+        const { data, error } = await supabase.functions.invoke('terminal-suggest', {
+          body: {
+            mode: 'agent',
+            goal, cwd, profile: props.profile,
+            lastCommand: lastCmd,
+            lastOutput: lastOut.slice(-1800),
+            lastCode,
+            iteration: i,
+            projectContext,
+          },
+        });
+        if (error) throw error;
+        decision = data || decision;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'erreur inconnue';
+        updateStep(stepId, { status: 'error', detail: `IA indisponible : ${msg}` });
+        appendLine({ kind: 'err', text: `⚠ agent : IA indisponible — ${msg}` });
+        break;
+      }
+      setAiLoading(false);
+
+      const label = decision.step || `Itération ${i}`;
+      updateStep(stepId, { label, detail: decision.command || decision.reason || decision.summary || '' });
+
+      if (decision.action === 'done') {
+        updateStep(stepId, { status: 'ok', label: 'Objectif atteint' });
+        appendLine({ kind: 'sys', text: `✔ AGENT terminé : ${decision.summary || decision.reason || 'objectif atteint'}` });
+        playIf(props.soundEnabled, 'success');
+        break;
+      }
+      if (decision.action === 'abort' || !decision.command) {
+        updateStep(stepId, { status: 'error', label: 'Abandon', detail: decision.reason || 'raison inconnue' });
+        appendLine({ kind: 'err', text: `⏹ AGENT abandonne : ${decision.reason || 'raison inconnue'}` });
+        playIf(props.soundEnabled, 'error');
+        break;
+      }
+
+      // Danger gate
+      const danger = assessDanger(decision.command);
+      if (danger.dangerous) {
+        updateStep(stepId, { detail: `⚠ ${danger.reason} — confirmation…` });
+        const ok = await askDanger(decision.command, danger.reason || 'Commande sensible');
+        if (!ok) {
+          updateStep(stepId, { status: 'error', detail: 'Refusée par l\'utilisateur' });
+          appendLine({ kind: 'err', text: '⏹ AGENT : commande refusée par l\'utilisateur.' });
+          break;
+        }
+      }
+
+      // Exécution
+      cacheSuggestions([decision.command]);
+      setLines((prev) => [...prev, { kind: 'cmd', text: decision.command!, prompt: promptText }]);
+      const result = await executeShell(decision.command);
+      lastCmd = decision.command;
+      lastOut = (result.stdout || '') + '\n' + (result.stderr || '');
+      lastCode = result.code;
+      if (result.code === 0) {
+        successiveFailures = 0;
+        updateStep(stepId, { status: 'ok' });
+      } else {
+        successiveFailures += 1;
+        updateStep(stepId, { status: 'error', detail: `code ${result.code} · tentative de correction` });
+        if (successiveFailures >= 3) {
+          appendLine({ kind: 'err', text: '⏹ AGENT : 3 échecs consécutifs, abandon.' });
+          break;
+        }
+      }
+    }
+
+    setAutoLoop(null);
+    setAiLoading(false);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, [appendLine, cwd, executeShell, props.aiEnabled, props.profile, props.soundEnabled, promptText, detectProject, updateStep, addStep, askDanger]);
+
+  const chatWithAI = useCallback(async (text: string, msgHistory: { role: string; content: string }[]): Promise<string> => {
+    const { supabase } = await import('@/integrations/supabase/client');
+    const { data, error } = await supabase.functions.invoke('terminal-suggest', {
+      body: {
+        mode: 'chat',
+        messages: [...msgHistory, { role: 'user', content: text }],
+        cwd,
+        profile: props.profile,
+      },
+    });
+    if (error) throw error;
+    return (data?.reply || '').trim();
+  }, [cwd, props.profile]);
+
+  // Register agent + chat callables for parent (TerminalPanel chat pane)
+  useEffect(() => {
+    props.registerRunAgent?.(runAgentLoop);
+    props.registerChatAI?.(chatWithAI);
+  }, [props, runAgentLoop, chatWithAI]);
 
   const changeDirectory = useCallback(async (target: string) => {
     try {
@@ -259,6 +451,46 @@ export function TerminalView(props: TerminalViewProps) {
     }
   }, [appendLine, cwd, props.soundEnabled]);
 
+  const printHelp = useCallback(() => {
+    const lines: Array<{ kind: LineKind; text: string }> = [
+      { kind: 'sys', text: '── Terminal cognitif · commandes internes ──' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Navigation' },
+      { kind: 'sys', text: '    cd <dossier>              change de dossier (accepte ~, .., chemins absolus)' },
+      { kind: 'sys', text: '    ls / dir                  liste le contenu (passe au shell réel)' },
+      { kind: 'sys', text: '    pwd                       affiche le dossier courant' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Fichiers' },
+      { kind: 'sys', text: '    mkdir <nom>               crée un dossier' },
+      { kind: 'sys', text: '    touch / New-Item <nom>    crée un fichier vide' },
+      { kind: 'sys', text: '    rm / cp / mv              supprime, copie, déplace' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Assistant IA (Lovable AI Gateway)' },
+      { kind: 'sys', text: '    ia <prompt>               propose 1–5 commandes candidates' },
+      { kind: 'sys', text: '    ia --auto <objectif>      boucle autonome : exécute + corrige jusqu\'à atteindre l\'objectif' },
+      { kind: 'sys', text: '    ia --explain <commande>   explique ce que fait une commande' },
+      { kind: 'sys', text: '    ia --fix                  propose la correction pour la dernière erreur' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Terminal' },
+      { kind: 'sys', text: '    clear / cls               efface la vue' },
+      { kind: 'sys', text: '    help                      affiche cette aide' },
+      { kind: 'sys', text: '    exit                      ferme la vue' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Raccourcis clavier' },
+      { kind: 'sys', text: '    Tab / →                   accepte le ghost text (fantôme gris)' },
+      { kind: 'sys', text: '    Ctrl+Espace               ouvre la liste des suggestions' },
+      { kind: 'sys', text: '    ↑ / ↓                     historique · navigation dans les suggestions' },
+      { kind: 'sys', text: '    Ctrl+L                    efface la vue' },
+      { kind: 'sys', text: '    Ctrl+C                    interrompt une commande / une boucle AUTO' },
+      { kind: 'sys', text: '    Ctrl+F                    rechercher dans le buffer' },
+      { kind: 'sys', text: '' },
+      { kind: 'sys', text: '  Astuce · clique un chemin, une IP, un nom de fichier ou un hash pour l\'insérer.' },
+    ];
+    setLines((prev) => [...prev, ...lines]);
+  }, []);
+
+  const lastErrorRef = useRef<{ cmd: string; out: string } | null>(null);
+
   const exec = useCallback(async (raw: string) => {
     const cmd = raw.trim();
     setLines((prev) => [...prev, { kind: 'cmd', text: raw, prompt: promptText }]);
@@ -275,9 +507,8 @@ export function TerminalView(props: TerminalViewProps) {
       props.onClose?.();
       return;
     }
-    if (cmd === 'help') {
-      appendLine({ kind: 'sys', text: 'Commandes internes : clear/cls, exit, help, cd, ai <objectif>. Tout le reste passe au shell réel.' });
-      appendLine({ kind: 'sys', text: 'Tab accepte le ghost text · Ctrl+Espace ouvre les suggestions · clique un nom/IP/chemin pour l\'insérer.' });
+    if (cmd === 'help' || cmd === '?') {
+      printHelp();
       return;
     }
 
@@ -287,17 +518,55 @@ export function TerminalView(props: TerminalViewProps) {
       return;
     }
 
-    if (/^(?:ai|@ai|\?)\s+/i.test(cmd)) {
-      const prompt = cmd.replace(/^(?:ai|@ai|\?)\s+/i, '').trim();
-      appendLine({ kind: 'sys', text: 'Génération de commandes candidates…' });
-      await requestAiSuggestions('prompt', '', prompt);
+    // ── IA scopes ──
+    const iaMatch = /^(?:ia|ai|@ai|\?)\s+(.+)$/i.exec(cmd);
+    if (iaMatch) {
+      const rest = iaMatch[1].trim();
+      // --auto <goal>
+      const autoMatch = /^--?auto\s+(.+)$/i.exec(rest);
+      if (autoMatch) { await runAgentLoop(autoMatch[1].trim()); return; }
+      // --explain <cmd>
+      const explainMatch = /^--?explain\s+(.+)$/i.exec(rest);
+      if (explainMatch) { await explainCommand(explainMatch[1].trim()); return; }
+      // --fix (uses last error)
+      if (/^--?fix\b/i.test(rest)) {
+        if (!lastErrorRef.current) { appendLine({ kind: 'err', text: 'Rien à corriger : aucune erreur récente.' }); return; }
+        appendLine({ kind: 'sys', text: 'IA propose une correction pour la dernière erreur…' });
+        await requestAiSuggestions(lastErrorRef.current.cmd, lastErrorRef.current.out, `Corrige cette commande qui a échoué : ${lastErrorRef.current.cmd}`);
+        return;
+      }
+      // --suggest <prompt> → build command candidates
+      const suggestMatch = /^--?suggest\s+(.+)$/i.exec(rest);
+      if (suggestMatch) {
+        appendLine({ kind: 'sys', text: 'IA construit des commandes candidates…' });
+        await requestAiSuggestions('prompt', '', suggestMatch[1].trim());
+        return;
+      }
+      // Default → chat conversationnel
+      if (!props.aiEnabled) { appendLine({ kind: 'err', text: 'IA désactivée — active-la dans la barre du terminal.' }); return; }
+      setAiLoading(true);
+      setAiLoadingLabel('🤖 IA réfléchit…');
+      try {
+        const reply = await chatWithAI(rest, []);
+        setAiLoading(false);
+        if (reply) reply.split('\n').forEach((l) => appendLine({ kind: 'out', text: `🤖 ${l}` }));
+        else appendLine({ kind: 'err', text: 'IA n\'a rien renvoyé.' });
+      } catch (err) {
+        setAiLoading(false);
+        appendLine({ kind: 'err', text: `IA indisponible : ${err instanceof Error ? err.message : 'erreur'}` });
+      }
       return;
     }
 
     const result = await executeShell(cmd);
+    if (result.code !== 0) {
+      lastErrorRef.current = { cmd, out: (result.stdout || '') + '\n' + (result.stderr || '') };
+    }
     setTimeout(() => inputRef.current?.focus(), 0);
     requestAiSuggestions(cmd, result.stdout + '\n' + result.stderr);
-  }, [appendLine, changeDirectory, executeShell, promptText, props, requestAiSuggestions]);
+  }, [appendLine, changeDirectory, executeShell, printHelp, promptText, props, requestAiSuggestions, runAgentLoop, explainCommand, chatWithAI]);
+
+
 
   // Compute suggestions + ghost text on each input change
   useEffect(() => {
@@ -344,11 +613,17 @@ export function TerminalView(props: TerminalViewProps) {
   }, [props.soundEnabled]);
 
   const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Mechanical key sound on any printable/nav key (respects user toggle)
+    if (e.key.length === 1 || ['Backspace', 'Enter', 'Tab', 'Space', ' '].includes(e.key)) {
+      playKey();
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       if (suggestOpen && suggestions[suggestIdx]) {
-        setInput(suggestions[suggestIdx].value);
+        const chosen = suggestions[suggestIdx].value;
+        setInput(chosen);
         setSuggestOpen(false);
+        if (suggestions[suggestIdx].source === 'ai') bumpSuggestionUse(chosen);
         return;
       }
       exec(input);
@@ -395,11 +670,19 @@ export function TerminalView(props: TerminalViewProps) {
     } else if (e.key === 'l' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       setLines([]);
-    } else if (e.key === 'c' && e.ctrlKey && running) {
-      e.preventDefault();
-      streamRef.current?.abort();
-      appendLine({ kind: 'err', text: '^C interrupted' });
-      setRunning(false);
+    } else if (e.key === 'c' && e.ctrlKey) {
+      // Ctrl+C: interrompt commande courante ET/OU boucle AUTO
+      if (autoLoop?.active) {
+        e.preventDefault();
+        autoAbortRef.current = true;
+        appendLine({ kind: 'err', text: '⏹ AUTO : interruption demandée…' });
+      }
+      if (running) {
+        e.preventDefault();
+        streamRef.current?.abort();
+        appendLine({ kind: 'err', text: '^C interrupted' });
+        setRunning(false);
+      }
     } else if (e.key === 'f' && e.ctrlKey) {
       e.preventDefault();
       setFindMode(true);
@@ -457,9 +740,24 @@ export function TerminalView(props: TerminalViewProps) {
           <LineRow key={i} line={l} findQuery={findQuery} onInsertToken={insertToken} />
         ))}
 
+        {agentSteps.length > 0 && (autoLoop?.active || agentSteps.some((s) => s.status === 'error' || s.status === 'running')) && (
+          <AgentSteps
+            steps={agentSteps}
+            goal={autoLoop?.goal || ''}
+            iter={autoLoop?.iter || 0}
+            max={12}
+            onAbort={autoLoop?.active ? () => { autoAbortRef.current = true; } : undefined}
+          />
+        )}
+
         {/* Prompt line */}
         <div className="flex items-center relative mt-0.5">
           <StatusDot running={running} />
+          {autoLoop?.active && (
+            <span className="mr-1.5 shrink-0 text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-400/30 animate-pulse">
+              AGENT · {autoLoop.iter}/12
+            </span>
+          )}
           <span className="shrink-0 bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
             {promptText}&nbsp;
           </span>
@@ -487,7 +785,11 @@ export function TerminalView(props: TerminalViewProps) {
             {/* Suggestion popup */}
             {(suggestOpen || aiLoading) && (suggestions.length > 0 || aiLoading) && (
               <div className="absolute left-0 top-5 z-20 glass-menu rounded-lg py-1 min-w-[300px] max-w-[520px] shadow-2xl border border-border/40 animate-scale-in terminal-suggest-pop">
-                {aiLoading && <div className="px-2.5 py-1 text-[10px] text-muted-foreground font-mono terminal-thinking-bar" />}
+                {aiLoading && (
+                  <div className="px-2.5 py-1.5 border-b border-border/40">
+                    <NpmSpinner label={aiLoadingLabel} />
+                  </div>
+                )}
                 {suggestions.map((s, i) => (
                   <button
                     key={s.value + i}
@@ -515,9 +817,16 @@ export function TerminalView(props: TerminalViewProps) {
               <Square size={9} /> stop
             </button>
           )}
-          {running && !streamRef.current && <Loader2 size={10} className="ml-2 animate-spin text-primary" />}
+          {running && !streamRef.current && <NpmSpinner className="ml-2" />}
         </div>
       </div>
+      <ConfirmDangerousDialog
+        open={!!dangerPrompt}
+        command={dangerPrompt?.command || ''}
+        reason={dangerPrompt?.reason || ''}
+        onConfirm={() => { dangerPrompt?.resolve(true); setDangerPrompt(null); }}
+        onCancel={() => { dangerPrompt?.resolve(false); setDangerPrompt(null); }}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@
  * (paths, IPs, URLs, PIDs…). Very forgiving — false positives are cheap.
  */
 
-export type TokKind = 'dir' | 'file' | 'path' | 'url' | 'ip' | 'port' | 'pid' | 'hash' | 'email' | 'flag' | 'num' | 'text';
+export type TokKind = 'dir' | 'file' | 'path' | 'url' | 'ip' | 'port' | 'pid' | 'hash' | 'email' | 'flag' | 'num' | 'date' | 'size' | 'user' | 'text';
 
 export interface Tok {
   kind: TokKind;
@@ -19,6 +19,9 @@ const RX_HASH = /\b(?=[a-f0-9]*[a-f])[a-f0-9]{7,40}\b/g;
 const RX_WINPATH = /(?:[A-Z]:\\|\\\\)[^\s"'|<>]+/g;
 const RX_UNIXPATH = /(?:\.{0,2}\/|~\/)[^\s"'|<>:,]+/g;
 const RX_PID = /\bPID[\s:]+(\d{2,7})\b/g;
+const RX_DATE = /\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b/g;
+const RX_TIME = /\b\d{1,2}:\d{2}(?::\d{2})?\s?(?:AM|PM)?\b/gi;
+const RX_SIZE = /\b\d+(?:[.,]\d+)?\s?(?:B|KB|K|MB|M|GB|G|TB|T|Ko|Mo|Go|To|bytes?|octets?)\b/gi;
 
 interface Range { start: number; end: number; kind: TokKind; text: string; insert: string; }
 
@@ -60,17 +63,29 @@ function detectCmdListing(line: string): { name: string; isDir: boolean } | null
 function collectPlainNames(line: string): Range[] {
   if (!line.trim()) return [];
   if (/\b(Mode|LastWriteTime|Length|Name|Directory of|total)\b/i.test(line)) return [];
-  if (/\d{1,4}[\/-]\d{1,2}[\/-]\d{1,4}\s+\d{1,2}:\d{2}/.test(line)) return [];
+  const isDated = /\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\s+\d{1,2}:\d{2}/.test(line);
   const ranges: Range[] = [];
   const re = /[^\s]+/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(line))) {
     const text = m[0].replace(/[,:;]+$/g, '');
     if (!looksLikeName(text)) continue;
+    // On dated listing rows, skip everything that looks like date/time/size tokens
+    if (isDated) {
+      if (/^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$/.test(text)) continue;
+      if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) continue;
+      if (/^\d+(?:[.,]\d+)?$/.test(text)) continue;
+      if (/^(AM|PM|<DIR>)$/i.test(text)) continue;
+      if (/^[-drwxal]+$/i.test(text) && text.length <= 10) continue;
+    }
     const isDir = /\/$/.test(text) || !/\.[A-Za-z0-9]{1,8}$/.test(text);
     ranges.push({ start: m.index, end: m.index + text.length, kind: isDir ? 'dir' : 'file', text, insert: quote(text.replace(/\/$/, '')) });
   }
-  return ranges.length <= 12 ? ranges : [];
+  // If dated line yielded exactly one candidate → keep only that (the filename)
+  if (isDated && ranges.length > 1) {
+    return [ranges[ranges.length - 1]];
+  }
+  return ranges.length <= 24 ? ranges : [];
 }
 
 /**
@@ -139,6 +154,9 @@ export function tokenize(line: string): Tok[] {
   collect(RX_IPPORT, 'ip');
   collect(RX_PID, 'pid', (m) => m[1]);
   collect(RX_HASH, 'hash');
+  collect(RX_DATE, 'date');
+  collect(RX_TIME, 'date');
+  collect(RX_SIZE, 'size');
 
   ranges.sort((a, b) => a.start - b.start);
 
@@ -165,5 +183,8 @@ export const TOK_CLASS: Record<TokKind, string> = {
   email: 'text-teal-300 hover:bg-teal-500/20 rounded px-0.5 cursor-pointer transition-colors',
   flag: 'text-amber-300',
   num: 'text-fuchsia-300',
+  date: 'text-emerald-400/70 tabular-nums',
+  size: 'text-amber-200/80 tabular-nums',
+  user: 'text-indigo-300',
   text: 'text-muted-foreground',
 };

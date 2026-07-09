@@ -171,3 +171,62 @@ export function playHover() {
   lastHover = t;
   play('hover');
 }
+
+// ── Synthesized keystroke sound (mechanical key click, Opera GX-like) ──
+// Uses filtered noise burst + short pitched blip. Zero-asset, ~1.5kb of code.
+const STORE_KEY_KEYSOUND = 'terminal.keysound.enabled';
+let keySoundEnabled = (() => {
+  try { return localStorage.getItem(STORE_KEY_KEYSOUND) === '1'; } catch { return false; }
+})();
+export function isKeySoundEnabled() { return keySoundEnabled; }
+export function setKeySoundEnabled(b: boolean) {
+  keySoundEnabled = b;
+  try { localStorage.setItem(STORE_KEY_KEYSOUND, b ? '1' : '0'); } catch { /* ignore */ }
+  notify();
+}
+
+let lastKey = 0;
+export function playKey() {
+  if (muted || masterVolume === 0 || !keySoundEnabled) return;
+  const now = performance.now();
+  if (now - lastKey < 18) return; // rate-limit for very fast typers
+  lastKey = now;
+  const c = getCtx();
+  if (!c) return;
+  if (c.state === 'suspended') { void c.resume(); }
+  const t0 = c.currentTime;
+
+  // Noise burst (the "click")
+  const bufferSize = Math.floor(c.sampleRate * 0.03);
+  const buf = c.createBuffer(1, bufferSize, c.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+  }
+  const noise = c.createBufferSource();
+  noise.buffer = buf;
+  const bp = c.createBiquadFilter();
+  bp.type = 'bandpass';
+  bp.frequency.value = 1800 + Math.random() * 900;
+  bp.Q.value = 6;
+  const noiseGain = c.createGain();
+  const nvol = 0.22 * masterVolume;
+  noiseGain.gain.setValueAtTime(nvol, t0);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.045);
+  noise.connect(bp).connect(noiseGain).connect(c.destination);
+  noise.start(t0);
+  noise.stop(t0 + 0.05);
+
+  // Tiny sub thump for the "keycap bottoming out"
+  const osc = c.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(140 + Math.random() * 80, t0);
+  osc.frequency.exponentialRampToValueAtTime(60, t0 + 0.05);
+  const oGain = c.createGain();
+  const ovol = 0.10 * masterVolume;
+  oGain.gain.setValueAtTime(ovol, t0);
+  oGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.06);
+  osc.connect(oGain).connect(c.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.07);
+}

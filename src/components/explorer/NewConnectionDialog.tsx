@@ -1,18 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
-import { Loader2, Plug, Cloud, HardDrive, Server, Globe, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, Plug, CheckCircle2, XCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { HDIcon } from './icons/HDIcon';
+import { LocationIcon } from './FileIcon';
 import { api } from '@/lib/apiClient';
 import { cn } from '@/lib/utils';
-import { sidebarIcons } from './FileIcon';
+import type { LocationKey } from '@/lib/iconResolver';
 
-const GDRIVE = sidebarIcons.googleDrive;
-const ONEDRIVE = sidebarIcons.oneDrive;
-const DROPBOX = sidebarIcons.dropbox;
-const S3 = sidebarIcons.aws;
-const BOX = sidebarIcons.box;
-const ICLOUD = sidebarIcons.icloud;
-const WEBDAV = sidebarIcons.webdav;
 const LOCAL_SOURCES_KEY = 'explorer.sources.local.v1';
 
 /**
@@ -33,21 +26,21 @@ interface TypeMeta {
   id: ConnectionType;
   label: string;
   hint: string;
-  icon: React.ReactNode;
+  iconKey: LocationKey;
   defaultPort?: number;
   fields: Array<'host' | 'port' | 'user' | 'password' | 'path' | 'secure' | 'endpoint' | 'bucket' | 'accessKey' | 'secretKey' | 'clientId' | 'clientSecret' | 'refreshToken' | 'token' | 'privateKey'>;
 }
 
 const TYPES: TypeMeta[] = [
-  { id: 'ftp',      label: 'FTP',         hint: 'FTP · FTPS · SFTP unifié',           icon: <Server size={22} className="text-primary" />,       defaultPort: 21,  fields: ['host', 'port', 'user', 'password', 'path'] },
-  { id: 'smb',      label: 'SMB / CIFS',  hint: 'Partage Windows / Samba',           icon: <HardDrive size={22} className="text-blue-400" />,   defaultPort: 445, fields: ['host', 'port', 'user', 'password', 'path'] },
-  { id: 'webdav',   label: 'WebDAV',      hint: 'Nextcloud, ownCloud, IIS…',          icon: <HDIcon src={WEBDAV} size={22} alt="WebDAV" />,       defaultPort: 443, fields: ['host', 'user', 'password', 'path'] },
-  { id: 'gdrive',   label: 'Google Drive', hint: 'OAuth utilisateur (client ID)',     icon: <HDIcon src={GDRIVE} size={22} alt="Google Drive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
-  { id: 'onedrive', label: 'OneDrive',    hint: 'Microsoft Graph API',                icon: <HDIcon src={ONEDRIVE} size={22} alt="OneDrive" />, fields: ['clientId', 'clientSecret', 'refreshToken'] },
-  { id: 'dropbox',  label: 'Dropbox',     hint: 'App token personnel',                icon: <HDIcon src={DROPBOX} size={22} alt="Dropbox" />,   fields: ['token'] },
-  { id: 'box',      label: 'Box',         hint: 'OAuth Box / developer token',        icon: <HDIcon src={BOX} size={22} alt="Box" />,           fields: ['clientId', 'clientSecret', 'refreshToken'] },
-  { id: 'icloud',   label: 'iCloud Drive', hint: 'App-specific password',              icon: <HDIcon src={ICLOUD} size={22} alt="iCloud Drive" />, fields: ['user', 'password', 'path'] },
-  { id: 's3',       label: 'S3 / MinIO',  hint: 'AWS S3 ou compatible',               icon: <HDIcon src={S3} size={22} alt="S3" />,             fields: ['endpoint', 'bucket', 'accessKey', 'secretKey'] },
+  { id: 'ftp',      label: 'FTP',         hint: 'FTP · FTPS · SFTP unifié',           iconKey: 'ftp',         defaultPort: 21,  fields: ['host', 'port', 'user', 'password', 'path'] },
+  { id: 'smb',      label: 'SMB / CIFS',  hint: 'Partage Windows / Samba',            iconKey: 'smb',         defaultPort: 445, fields: ['host', 'port', 'user', 'password', 'path'] },
+  { id: 'webdav',   label: 'WebDAV',      hint: 'Nextcloud, ownCloud, IIS…',          iconKey: 'webdav',      defaultPort: 443, fields: ['host', 'user', 'password', 'path'] },
+  { id: 'gdrive',   label: 'Google Drive', hint: 'OAuth utilisateur (client ID)',     iconKey: 'googleDrive', fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'onedrive', label: 'OneDrive',    hint: 'Microsoft Graph API',                iconKey: 'oneDrive',    fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'dropbox',  label: 'Dropbox',     hint: 'App token personnel',                iconKey: 'dropbox',     fields: ['token'] },
+  { id: 'box',      label: 'Box',         hint: 'OAuth Box / developer token',        iconKey: 'box',         fields: ['clientId', 'clientSecret', 'refreshToken'] },
+  { id: 'icloud',   label: 'iCloud Drive', hint: 'App-specific password',             iconKey: 'icloud',      fields: ['user', 'password', 'path'] },
+  { id: 's3',       label: 'S3 / MinIO',  hint: 'AWS S3 ou compatible',               iconKey: 's3',          fields: ['endpoint', 'bucket', 'accessKey', 'secretKey'] },
 ];
 
 type FormState = Record<string, string | number | boolean>;
@@ -251,7 +244,7 @@ export function NewConnectionDialog({
                 )}
               >
                 <span className="w-8 h-8 rounded flex items-center justify-center bg-[hsl(var(--muted))]/60 shrink-0">
-                  {t.icon}
+                  <LocationIcon locationKey={t.iconKey} size={22} alt={t.label} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[12px] font-normal truncate">{t.label}</span>
@@ -408,7 +401,7 @@ export function NewConnectionDialog({
 
             {(['gdrive', 'onedrive', 'box', 'icloud', 'dropbox', 's3', 'webdav'] as ConnectionType[]).includes(type) && (
               <p className="text-[10px] text-muted-foreground/70 leading-relaxed pt-1 border-t border-border/20 mt-2">
-                <Cloud size={10} className="inline mr-1" />
+                <LocationIcon locationKey="cloud" size={10} className="inline mr-1" />
                 Enregistrement sans simulation : les identifiants sont validés au minimum, puis la source est ajoutée comme connexion configurée.
               </p>
             )}

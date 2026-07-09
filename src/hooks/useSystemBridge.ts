@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, apiUrl, getBootParams } from '@/lib/apiClient';
+import { getCachedLocalServers, setCachedLocalServers } from '@/lib/localServersCache';
 
 export interface SystemInfo {
   platform: string;
@@ -93,14 +94,23 @@ export function useSystemBridge() {
     } catch { return { success: false, data: [] }; }
   }, []);
 
-  const getListeningServices = useCallback(async (): Promise<CacheBackedPayload<any[]>> => ({ success: true, data: [] }), []);
+  const getListeningServices = useCallback(async (): Promise<CacheBackedPayload<any[]>> => {
+    const cached = getCachedLocalServers<any[]>();
+    if (cached) return { success: true, data: cached };
+    try {
+      const r = await api.get<CacheBackedPayload<any[]>>('/api/system/services');
+      const data = r?.data || [];
+      if (r?.success) setCachedLocalServers(data);
+      return { success: !!r?.success, data };
+    } catch { return { success: true, data: [] }; }
+  }, []);
 
   const invalidateExplorerDirCache = useCallback(async (path: string) => ({ success: true, path }), []);
   const watchDir = useCallback((_path: string, _cb: (e: any) => void) => () => {}, []);
 
   const exec = useCallback(async (_command: string) => ({ success: false, stdout: '', stderr: 'exec disabled', exitCode: -1, duration: 0 }), []);
   const readFile = useCallback(async (_p: string) => ({ success: false, path: _p, error: 'not-implemented' }), []);
-  const writeFile = useCallback(async (_p: string, _c: string) => ({ success: false, path: _p, error: 'not-implemented' }), []);
+  const writeFile = useCallback(async (p: string, c: string) => api.post<{ success: boolean; error?: string }>('/api/fs/write', { path: p, content: c }), []);
 
   const mkdir  = useCallback(async (p: string) => api.post<{ success: boolean; error?: string }>('/api/fs/mkdir',  { path: p }), []);
   const rename = useCallback(async (from: string, to: string) => api.post<{ success: boolean; error?: string }>('/api/fs/rename', { from, to }), []);

@@ -192,8 +192,8 @@ export function RealExplorerTab({ active, initialPath, openToken = 0, onPathChan
         onCut={cutSelected}
         onPaste={() => void pasteSelected()}
         onDelete={deleteSelected}
-        onNewFolder={() => void explorer.createFolder()}
-        onNewFile={() => explorerToast.info('Creation de fichier demo', 'Non destructive pour cette passe')}
+        onNewFolder={() => { void explorer.createFolder().then((r) => { if (r && !r.success && r.error && r.error !== 'cancelled') explorerToast.error('Création impossible', r.error); }); }}
+        onNewFile={(kind) => { void explorer.createFile(kind as any).then((r) => { if (r && !r.success && r.error && r.error !== 'cancelled') explorerToast.error('Création impossible', r.error); }); }}
         onOpenTerminal={() => setTerminalOpen(true)}
         onRename={() => { if (explorer.nav.selectedItems.length === 1) explorer.startRename(explorer.nav.selectedItems[0]); }}
         onRefresh={() => void explorer.refresh()}

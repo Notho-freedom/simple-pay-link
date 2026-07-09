@@ -443,14 +443,43 @@ export function useRealFileExplorer(initialPath?: string) {
     if (result.success) await loadDirectory(currentPath, true);
   }, [currentPath, files, loadDirectory, rename]);
 
-  const createFolder = useCallback(async () => {
-    if (isVirtualPath(currentPath)) return;
-    const name = prompt('Nom du nouveau dossier :', 'Nouveau dossier');
-    if (!name?.trim()) return;
-    if (!confirm(`Creer le dossier "${name.trim()}" dans ${currentPath} ?`)) return;
-    const result = await mkdir(joinPath(currentPath, name.trim()));
-    if (result.success) await loadDirectory(currentPath, true);
+  const createFolder = useCallback(async (name?: string) => {
+    if (isVirtualPath(currentPath)) return { success: false, error: 'virtual-path' };
+    const finalName = (name ?? prompt('Nom du nouveau dossier :', 'Nouveau dossier'))?.trim();
+    if (!finalName) return { success: false, error: 'cancelled' };
+    const result = await mkdir(joinPath(currentPath, finalName));
+    if (result.success) {
+      directoryCache.delete(currentPath);
+      await loadDirectory(currentPath, true);
+      setRenamingId(joinPath(currentPath, finalName));
+    }
+    return result;
   }, [currentPath, loadDirectory, mkdir]);
+
+  const createFile = useCallback(async (kind: 'txt' | 'md' | 'docx' | 'xlsx' | 'pptx' | 'code' | 'json') => {
+    if (isVirtualPath(currentPath)) return { success: false, error: 'virtual-path' };
+    const defaults: Record<string, { name: string; content: string }> = {
+      txt: { name: 'Nouveau document.txt', content: '' },
+      md: { name: 'Nouveau document.md', content: '# Nouveau document\n' },
+      json: { name: 'nouveau.json', content: '{\n  \n}\n' },
+      code: { name: 'nouveau.ts', content: '' },
+      docx: { name: 'Nouveau document.docx', content: '' },
+      xlsx: { name: 'Nouvelle feuille.xlsx', content: '' },
+      pptx: { name: 'Nouvelle presentation.pptx', content: '' },
+    };
+    const def = defaults[kind] || defaults.txt;
+    const name = prompt('Nom du nouveau fichier :', def.name)?.trim();
+    if (!name) return { success: false, error: 'cancelled' };
+    const target = joinPath(currentPath, name);
+    const result = await bridge.writeFile(target, def.content);
+    if (result.success) {
+      directoryCache.delete(currentPath);
+      await loadDirectory(currentPath, true);
+      setRenamingId(target);
+    }
+    return result;
+  }, [bridge, currentPath, loadDirectory]);
+
 
   const getItemName = useCallback((id: string) => files.find((file) => file.id === id)?.name || id.replace(/\\/g, '/').split('/').pop() || id, [files]);
   const buildFullPath = useCallback((id: string) => files.find((file) => file.id === id)?.path || id, [files]);
@@ -519,6 +548,7 @@ export function useRealFileExplorer(initialPath?: string) {
     getItemName,
     buildFullPath,
     createFolder,
+    createFile,
     renamedItems: {},
     showHidden,
     setShowHidden,

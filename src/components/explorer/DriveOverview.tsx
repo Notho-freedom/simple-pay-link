@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Server, WifiOff } from 'lucide-react';
 import { HDIcon } from './icons/HDIcon';
-import { sidebarIcons } from './FileIcon';
+import { LocationIcon } from './FileIcon';
 import { useI18n } from '@/i18n/LanguageContext';
 import { cn } from '@/lib/utils';
 import { openContextMenu } from '@/lib/contextMenuBus';
@@ -10,6 +10,8 @@ import { NewConnectionDialog } from './NewConnectionDialog';
 import { localServers } from '@/data/localServers';
 import { explorerToast } from './ExplorerToasts';
 import { api } from '@/lib/apiClient';
+import { providerLocationKey } from '@/lib/providerIcons';
+import type { LocationKey } from '@/lib/iconResolver';
 import type { ExplorerSource } from '@/types/explorerSources';
 import type { LocalServer } from '@/data/localServers';
 
@@ -21,13 +23,13 @@ interface Props {
   mode: 'this-pc' | 'network';
 }
 
-const QUICK_ACCESS = [
-  { id: 'desktop', label: 'Bureau', path: '/Desktop', icon: sidebarIcons.desktop },
-  { id: 'downloads', label: 'Téléchargements', path: '/Downloads', icon: sidebarIcons.downloads },
-  { id: 'documents', label: 'Documents', path: '/Documents', icon: sidebarIcons.documents },
-  { id: 'pictures', label: 'Images', path: '/Pictures', icon: sidebarIcons.pictures },
-  { id: 'music', label: 'Musique', path: '/Music', icon: sidebarIcons.music },
-  { id: 'videos', label: 'Vidéos', path: '/Videos', icon: sidebarIcons.videos },
+const QUICK_ACCESS: Array<{ id: string; label: string; path: string; iconKey: LocationKey }> = [
+  { id: 'desktop', label: 'Bureau', path: '/Desktop', iconKey: 'desktop' },
+  { id: 'downloads', label: 'Téléchargements', path: '/Downloads', iconKey: 'downloads' },
+  { id: 'documents', label: 'Documents', path: '/Documents', iconKey: 'documents' },
+  { id: 'pictures', label: 'Images', path: '/Pictures', iconKey: 'pictures' },
+  { id: 'music', label: 'Musique', path: '/Music', iconKey: 'music' },
+  { id: 'videos', label: 'Vidéos', path: '/Videos', iconKey: 'videos' },
 ];
 
 function isDriveSource(source: ExplorerSource) {
@@ -43,23 +45,14 @@ function formatBytes(bytes?: number) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} Go`;
 }
 
-function driveIcon(source: ExplorerSource) {
+function driveIconKey(source: ExplorerSource): LocationKey {
   const mount = source.driveInfo?.mount || source.root || '';
-  if (/^C:/i.test(mount)) return sidebarIcons.driveSystem;
-  return sidebarIcons.driveData;
+  if (/^C:/i.test(mount)) return 'driveSystem';
+  return 'driveData';
 }
 
-function sourceIcon(source: ExplorerSource) {
-  const provider = source.provider || source.type;
-  if (provider === 'gdrive') return sidebarIcons.googleDrive;
-  if (provider === 'onedrive') return sidebarIcons.oneDrive;
-  if (provider === 'dropbox') return sidebarIcons.dropbox;
-  if (provider === 'box') return sidebarIcons.box;
-  if (provider === 'icloud') return sidebarIcons.icloud;
-  if (provider === 'webdav') return sidebarIcons.webdav;
-  if (source.type === 'ftp' || provider === 'sftp' || provider === 'ftps') return sidebarIcons.ftp;
-  if (source.type === 'cloud') return sidebarIcons.cloud;
-  return sidebarIcons.host;
+function sourceIconKey(source: ExplorerSource): LocationKey {
+  return providerLocationKey(source.provider, source.type);
 }
 
 function EmptyStateLine({ title, description }: { title: string; description: string }) {
@@ -181,7 +174,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
               })}
               className="flex items-center gap-3 p-3 rounded-lg bg-[hsl(var(--muted))] hover:bg-[hsl(var(--explorer-hover))] cursor-pointer transition-colors"
             >
-              <HDIcon src={sourceIcon(source)} size={36} alt={source.name} fallbackEmoji="☁️" />
+              <LocationIcon locationKey={sourceIconKey(source)} size={36} alt={source.name} />
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-normal truncate">{source.name}</p>
                 <p className="text-[11px] text-muted-foreground truncate font-mono">
@@ -223,7 +216,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
             onClick={() => onOpenSource?.(homeSource.id, item.path)}
             className="flex flex-col items-center gap-2 p-3 rounded-lg hover:bg-[hsl(var(--explorer-hover))] cursor-pointer transition-colors"
           >
-            <HDIcon src={item.icon} size={44} alt={item.label} fallbackEmoji="📁" />
+            <LocationIcon locationKey={item.iconKey} size={44} alt={item.label} />
             <span className="text-[12px] font-light text-center truncate w-full">{item.label}</span>
           </div>
         ))}
@@ -232,7 +225,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
             onClick={onNavigateTrash}
             className="flex flex-col items-center gap-2 p-3 rounded-lg hover:bg-[hsl(var(--explorer-hover))] cursor-pointer transition-colors"
           >
-            <HDIcon src={sidebarIcons.trashEmpty} size={44} alt={t('drives.recycleBin')} fallbackEmoji="🗑️" />
+            <LocationIcon locationKey="trashEmpty" size={44} alt={t('drives.recycleBin')} />
             <span className="text-[12px] font-light text-center truncate w-full">{t('drives.recycleBin')}</span>
           </div>
         )}
@@ -266,7 +259,7 @@ export function DriveOverview({ onNavigateTrash, onOpenLocalServer, onOpenSource
               })}
               className="flex items-start gap-3 p-3 rounded-lg bg-[hsl(var(--muted))] hover:bg-[hsl(var(--explorer-hover))] cursor-pointer transition-colors"
             >
-              <HDIcon src={driveIcon(source)} size={40} alt={source.name} fallbackEmoji="💽" />
+              <LocationIcon locationKey={driveIconKey(source)} size={40} alt={source.name} />
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-normal truncate">{source.name}</p>
                 <div className="w-full h-[4px] rounded-full bg-background mt-1.5">

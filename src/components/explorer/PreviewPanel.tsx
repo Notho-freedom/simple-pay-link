@@ -5,7 +5,11 @@ import { formatFileSize, fileSystem } from '@/data/mockFileSystem';
 import { useI18n } from '@/i18n/LanguageContext';
 import { X, Play, Pause, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+
+const PREVIEW_WIDTH_KEY = 'explorer.preview.width.v1';
+const MIN_W = 220;
+const MAX_W = 640;
 
 interface Props {
   file: FileItem | null;
@@ -57,14 +61,53 @@ export function PreviewPanel({ file, displayName, onClose }: Props) {
   const isPdf = file?.type === 'pdf';
   const previewUrl = file ? (file as FileItem & { previewUrl?: string }).previewUrl : undefined;
 
+  // Persisted user-resized width; content-type suggests a default when the user
+  // hasn't manually resized yet.
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem(PREVIEW_WIDTH_KEY));
+      if (raw >= MIN_W && raw <= MAX_W) return raw;
+    } catch { /* ignore */ }
+    return 300;
+  });
+  const draggingRef = useRef(false);
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const next = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)));
+      setWidth(next);
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      try { localStorage.setItem(PREVIEW_WIDTH_KEY, String(width)); } catch { /* ignore */ }
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [width]);
+  useEffect(() => {
+    try { localStorage.setItem(PREVIEW_WIDTH_KEY, String(width)); } catch { /* ignore */ }
+  }, [width]);
+
   return (
     <motion.div
       initial={{ width: 0, opacity: 0 }}
-      animate={{ width: 280, opacity: 1 }}
+      animate={{ width, opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
       transition={{ type: 'spring', stiffness: 400, damping: 35 }}
-      className="h-full border-l border-border/50 bg-[hsl(var(--explorer-surface))] overflow-y-auto shrink-0"
+      className="h-full border-l border-border/50 bg-[hsl(var(--explorer-surface))] overflow-y-auto shrink-0 relative"
     >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        onMouseDown={onDragStart}
+        className="absolute top-0 left-0 h-full w-1 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-10"
+      />
       <div className="p-3">
         <div className="flex items-center justify-between mb-3">
           <span className="section-label">{t('preview.title')}</span>

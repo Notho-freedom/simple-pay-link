@@ -12,8 +12,9 @@ import { apiUrl } from '@/lib/apiClient';
 
 export type LocationKey =
   | 'thisPC' | 'driveSystem' | 'driveData' | 'driveBackup' | 'driveSSD'
-  | 'usb' | 'googleDrive' | 'oneDrive' | 'dropbox' | 'cloud'
-  | 'nas' | 'ftp' | 'network' | 'phone'
+  | 'usb' | 'googleDrive' | 'oneDrive' | 'dropbox' | 'box' | 'icloud'
+  | 'webdav' | 's3' | 'cloud'
+  | 'nas' | 'ftp' | 'sftp' | 'ftps' | 'smb' | 'network' | 'phone' | 'host'
   | 'trashEmpty' | 'trashFull'
   | 'desktop' | 'downloads' | 'documents' | 'pictures' | 'music' | 'videos'
   | 'folder' | 'folderOpen';
@@ -52,11 +53,19 @@ const LOCATION_BASE: Record<LocationKey, string> = {
   googleDrive: FB.fbCloud,
   oneDrive: FB.fbCloud,
   dropbox: FB.fbCloud,
+  box: FB.fbCloud,
+  icloud: FB.fbCloud,
+  webdav: FB.fbFolderServer,
+  s3: FB.fbFolderServer,
   cloud: FB.fbCloud,
   nas: FB.fbFolderServer,
   ftp: FB.fbFolderServer,
+  sftp: FB.fbFolderServer,
+  ftps: FB.fbFolderServer,
+  smb: FB.fbFolderServer,
   network: FB.fbNetwork,
   phone: FB.fbPhone,
+  host: FB.fbFolderServer,
   trashEmpty: FB.fbTrash,
   trashFull: FB.fbTrash,
   desktop: FB.fbFolderDesktop,
@@ -147,11 +156,19 @@ const LOCATION_UPGRADE: Record<LocationKey, string | null> = {
   googleDrive: 'https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg',
   oneDrive: 'https://upload.wikimedia.org/wikipedia/commons/3/3c/Microsoft_Office_OneDrive_%282019%E2%80%93present%29.svg',
   dropbox: 'https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg',
+  box: 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/box.svg',
+  icloud: 'https://upload.wikimedia.org/wikipedia/commons/1/1c/ICloud_logo.svg',
+  webdav: MAT('folder-server'),
+  s3: 'https://cdn.jsdelivr.net/gh/simple-icons/simple-icons/icons/amazons3.svg',
   cloud: null,
   nas: MAT('folder-server'),
   ftp: MAT('folder-server'),
+  sftp: MAT('folder-server'),
+  ftps: MAT('folder-server'),
+  smb: MAT('folder-server'),
   network: null,
   phone: null,
+  host: MAT('folder-server'),
   trashEmpty: null,
   trashFull: null,
   desktop: MAT('folder-desktop'),
