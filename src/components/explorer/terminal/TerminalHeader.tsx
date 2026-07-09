@@ -1,5 +1,7 @@
-import { TerminalSquare, X, Minus, Maximize2, SplitSquareHorizontal, SplitSquareVertical, Plus, Sparkles, Volume2, VolumeX, Eraser, Search, Settings2, MoreVertical, Copy as CopyIcon, Keyboard, MessageSquare } from 'lucide-react';
+import { TerminalSquare, X, Minus, Maximize2, SplitSquareHorizontal, SplitSquareVertical, Plus, Sparkles, Volume2, VolumeX, Eraser, Search, Settings2, MoreVertical, Copy as CopyIcon, Keyboard, MessageSquare, Sliders } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ModelPicker } from './ModelPicker';
+import { AiSettingsDialog } from './AiSettingsDialog';
 import { useState } from 'react';
 import { isKeySoundEnabled, setKeySoundEnabled } from '@/lib/sounds';
 
@@ -38,6 +40,7 @@ interface Props {
 export function TerminalHeader(props: Props) {
   const [profOpen, setProfOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [aiSettingsOpen, setAiSettingsOpen] = useState(false);
   const [keySound, setKeySoundState] = useState(isKeySoundEnabled());
   const profile = PROFILES.find((p) => p.id === props.profile) || PROFILES[0];
   const toggleKeySound = () => { const n = !keySound; setKeySoundState(n); setKeySoundEnabled(n); };
@@ -85,6 +88,11 @@ export function TerminalHeader(props: Props) {
       </span>
 
       <div className="flex-1" />
+
+      <ModelPicker onOpenSettings={() => setAiSettingsOpen(true)} />
+      <button onClick={() => setAiSettingsOpen(true)} className={iconBtn} title="Paramètres IA · fournisseurs, clés, auto-switch">
+        <Sliders size={11} />
+      </button>
 
       {/* Toolbar buttons */}
       {props.onToggleChat && (
@@ -162,6 +170,7 @@ export function TerminalHeader(props: Props) {
       <button onClick={props.onClose} className={cn(iconBtn, 'hover:bg-red-500/20 hover:text-red-400')} title="Fermer">
         <X size={11} />
       </button>
+      <AiSettingsDialog open={aiSettingsOpen} onClose={() => setAiSettingsOpen(false)} />
     </div>
   );
 }
