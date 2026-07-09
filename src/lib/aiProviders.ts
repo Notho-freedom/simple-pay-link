@@ -311,17 +311,16 @@ export async function callAI(payload: CallPayload, opts: CallOptions = {}): Prom
   if (!chain.length) throw new Error('Aucun fournisseur IA configuré.');
 
   let lastErr: Error | null = null;
-  for (const { p, model } of chain) {
+  for (let i = 0; i < chain.length; i++) {
+    const { p, model } = chain[i];
     try {
       const raw = await withTimeout(callSingleProvider(p, model, payload), opts.timeoutMs ?? 45000);
       return parseResult(raw, payload.mode, p.id, model);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       lastErr = new Error(`${p.label} (${model}) : ${msg}`);
-      // Notify caller of switch
-      const next = chain[chain.indexOf({ p, model }) + 1];
+      const next = chain[i + 1];
       if (opts.onSwitch && next) opts.onSwitch(p.label, next.p.label, msg);
-      // Continue to next provider
     }
   }
   throw lastErr || new Error('Tous les fournisseurs IA ont échoué.');
