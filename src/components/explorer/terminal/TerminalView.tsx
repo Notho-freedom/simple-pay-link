@@ -440,17 +440,13 @@ export function TerminalView(props: TerminalViewProps) {
   }, [appendLine, cwd, executeShell, props.aiEnabled, props.profile, props.soundEnabled, promptText, detectProject, updateStep, addStep, askDanger]);
 
   const chatWithAI = useCallback(async (text: string, msgHistory: { role: string; content: string }[]): Promise<string> => {
-    const { supabase } = await import('@/integrations/supabase/client');
-    const { data, error } = await supabase.functions.invoke('terminal-suggest', {
-      body: {
-        mode: 'chat',
-        messages: [...msgHistory, { role: 'user', content: text }],
-        cwd,
-        profile: props.profile,
-      },
+    const res = await callAI({
+      mode: 'chat',
+      messages: [...msgHistory, { role: 'user', content: text }],
+      cwd,
+      profile: props.profile,
     });
-    if (error) throw error;
-    return (data?.reply || '').trim();
+    return (res.reply || res.raw || '').trim();
   }, [cwd, props.profile]);
 
   // Register agent + chat callables for parent (TerminalPanel chat pane)
